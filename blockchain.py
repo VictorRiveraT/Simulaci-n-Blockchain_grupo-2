@@ -256,11 +256,43 @@ class Blockchain:
         return list(self._current_transactions)
 
     def proof_of_work(self, last_block: dict) -> int:
-        last_hash = self._hash(last_block)
+        """
+        Prueba de Trabajo: Busca el nonce hasheando el BLOQUE COMPLETO
+        (incluyendo la recompensa de minería y transacciones pendientes)
+        hasta que el hash comience con 4 ceros.
+        """
         nonce = 0
-        while not self._valid_proof(last_hash, nonce):
+        
+        # Preparamos la lista de transacciones que irían en el bloque candidato
+        transactions_in_block = []
+        # Incluimos la recompensa (simulada)
+        transactions_in_block.append({
+            'sender': "SYSTEM",
+            'recipient': self.node_id,
+            'amount': MINING_REWARD,
+            'signature': "SYSTEM_SIGNATURE"
+        })
+        # Incluimos el mempool
+        transactions_in_block.extend(self._current_transactions)
+        
+        while True:
+            # 1. Crear el bloque candidato temporal para el hash
+            guess_block = {
+                'index': len(self._chain) + 1,
+                'timestamp': time(), # El timestamp debe estar incluido en el hash
+                'transactions': transactions_in_block,
+                'nonce': nonce,
+                'previous_hash': self._hash(last_block),
+            }
+
+            # 2. Calcular el hash del bloque completo (usando _hash)
+            guess_hash = self._hash(guess_block)
+            
+            # 3. Verificar si el hash completo es válido
+            if guess_hash[:4] == "0000":
+                return nonce
+            
             nonce += 1
-        return nonce
 
     @staticmethod
     def _valid_proof(last_hash: str, nonce: int, difficulty: int = 4) -> bool:
