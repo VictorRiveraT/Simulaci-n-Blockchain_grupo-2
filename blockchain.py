@@ -8,13 +8,15 @@ from collections import OrderedDict
 from keys import Keys
 
 # --- CONSTANTES MODIFICADAS ---
-# 1. Generar un par de llaves permanente para el Fundador/Génesis
 _FOUNDER_KEYS = Keys.generate_key_pair()
 FOUNDER_PRIVATE_KEY = _FOUNDER_KEYS[0]
-FOUNDER_ADDRESS = _FOUNDER_KEYS[1] # Esta es ahora la dirección pública
+FOUNDER_ADDRESS = _FOUNDER_KEYS[1] 
 MINING_REWARD = 10
 
+# --- MODIFICACIÓN: Imprimir la llave privada del admin ---
 print("*"*50)
+print(f"🔑 Llave PRIVADA Fundador (Admin): {FOUNDER_PRIVATE_KEY}")
+print(f"   (Copia esta llave para usar el Faucet)")
 print(f"🔑 Dirección del Fundador (Génesis): {FOUNDER_ADDRESS}")
 print(f"💰 El Fundador tiene 5000 monedas para usar como Faucet.")
 print("*"*50)
@@ -22,6 +24,8 @@ print("*"*50)
 
 
 class Blockchain:
+    # ... (El resto de la clase blockchain.py no cambia en absoluto) ...
+    # ... (pegar el resto del código de blockchain.py que tenías) ...
     """
     Clase que maneja la lógica de la cadena de bloques.
     """
@@ -199,7 +203,6 @@ class Blockchain:
             
         return True
 
-    # --- NUEVA FUNCIÓN AÑADIDA ---
     def issue_faucet_funds(self, recipient_address: str, amount: int = 100) -> tuple[bool, str]:
         """
         El Fundador (dueño del nodo) firma y envía fondos
