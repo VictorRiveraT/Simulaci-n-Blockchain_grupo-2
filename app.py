@@ -11,6 +11,10 @@ app = Flask(__name__)
 CORS(app) 
 blockchain = Blockchain()
 
+# --- NUEVO: REGISTRO DE ALIAS ---
+# Un simple diccionario en memoria para guardar: {'alias': 'public_key'}
+alias_registry = {}
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "OK", "message": "Simulador de Blockchain Activo", "difficulty": 4}), 200
@@ -19,11 +23,11 @@ def health_check():
 def get_index():
     return send_from_directory('.', 'index.html')
 
-# --- NUEVO ENDPOINT AÑADIDO: /faucet ---
 @app.route('/faucet', methods=['POST'])
 def faucet_funds():
     """
     Reparte fondos del Fundador (Faucet) a una dirección.
+    (Este endpoint no cambia, ya es seguro)
     """
     values = request.get_json()
     if not values:
@@ -33,17 +37,51 @@ def faucet_funds():
     if not recipient_address:
         return jsonify({'message': 'Error: Se requiere "recipient_address".'}), 400
 
-    # Llamar a la nueva función de blockchain
     success, message = blockchain.issue_faucet_funds(recipient_address)
     
     if not success:
         return jsonify({'message': f'Error del Faucet: {message}'}), 500
 
-    # Si tiene éxito, la transacción está en el mempool
     return jsonify({
         'message': f'¡Éxito! {message}. Se enviaron 100 monedas a tu dirección.',
         'note': 'Deberás minar un bloque para confirmar la transacción.'
     }), 200
+
+# --- NUEVO ENDPOINT: /register_alias ---
+@app.route('/register_alias', methods=['POST'])
+def register_alias():
+    """
+    Registra un alias (nombre) para una llave pública.
+    """
+    values = request.get_json()
+    if not values:
+        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
+        
+    alias = values.get('alias')
+    public_key = values.get('public_key')
+
+    if not alias or not public_key:
+        return jsonify({'message': 'Error: Se requiere "alias" y "public_key".'}), 400
+
+    # Verificar si el alias ya está tomado
+    if alias in alias_registry:
+        return jsonify({'message': f'Error: El alias "{alias}" ya está tomado.'}), 400
+        
+    # Verificar si la llave ya tiene un alias
+    if public_key in alias_registry.values():
+         return jsonify({'message': 'Error: Esta Llave Pública ya tiene un alias registrado.'}), 400
+
+    alias_registry[alias] = public_key
+    print(f"Registro de Alias: {alias} -> {public_key}")
+    return jsonify({'message': f'¡Éxito! Alias "{alias}" registrado.'}), 201
+
+# --- NUEVO ENDPOINT: /aliases ---
+@app.route('/aliases', methods=['GET'])
+def get_aliases():
+    """
+    Retorna la lista completa de alias.
+    """
+    return jsonify(alias_registry), 200
 
 @app.route('/transactions/verify_only', methods=['POST'])
 def verify_transaction_only():
@@ -111,10 +149,8 @@ def mine():
         return jsonify({'message': 'Error: Se requiere "miner_address".'}), 400
 
     blockchain.node_id = miner_address
-
     last_block = blockchain.last_block
     nonce = blockchain.proof_of_work(last_block)
-
     previous_hash = blockchain._hash(last_block)
     block = blockchain._new_block(previous_hash, nonce)
 
