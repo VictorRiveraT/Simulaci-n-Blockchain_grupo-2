@@ -350,6 +350,29 @@
                 const d = await api('/mine', { method:'POST', body: JSON.stringify({ miner_address }) }); 
                 const t1 = performance.now(); 
                 log({ tiempo_ms: Math.round(t1-t0), ...d }, '⛏️ Bloque Minado'); 
+
+                // --- 🚀 CÓDIGO MODIFICADO ---
+                // Rellenar el panel del Bloque Candidato
+                document.getElementById('blockIndex').textContent = d.index;
+                document.getElementById('blockNonce').textContent = d.nonce;
+                document.getElementById('blockPrevHash').textContent = d.previous_hash;
+                document.getElementById('blockHash').textContent = d.hash;
+
+                // Rellenar la lista de transacciones del bloque
+                const txListEl = document.getElementById('blockTxsList');
+                if (d.transactions && d.transactions.length > 0) {
+                    txListEl.innerHTML = d.transactions.map((tx, i) => 
+                        `<p class="muted" style="font-size:11px; margin: 4px 0;">
+                            <b>Tx #${i}:</b> ${tx.amount} 
+                            (De: ${tx.sender === 'SYSTEM' ? 'SYSTEM' : pubToAddress(tx.sender)+'...'} 
+                            -> A: ${pubToAddress(tx.recipient)+'...'})
+                        </p>`
+                    ).join('');
+                } else {
+                    txListEl.innerHTML = '<p class="muted">No hay transacciones en este bloque.</p>';
+                }
+                // --- FIN DE CÓDIGO MODIFICADO ---
+
                 document.getElementById('btnChain').click();
                 document.getElementById('btnLeaders').click();
                 document.getElementById('btnBalances').click();
@@ -384,7 +407,7 @@
 
         document.getElementById('btnShowMempool').onclick = async () => { try { const d = await api('/mempool'); renderMempool(d, 'mempoolResults'); log(d, '📝 /mempool (Transacciones Pendientes)'); } catch(e){ log(e,'❌ ERROR /mempool'); } };
 
-        // --- LÓGICA DEL FAUCET AÑADIDA ---
+        // --- Lógica del Faucet ---
         document.getElementById('btnFaucet').onclick = async () => {
             const myPublicKey = document.getElementById('publicKey').value;
             if (!myPublicKey) {
@@ -399,7 +422,6 @@
                     body: JSON.stringify({ recipient_address: myPublicKey }) 
                 });
                 log(d, '💧 Faucet');
-                // Actualizar vistas para ver la transacción en el mempool
                 document.getElementById('btnShowMempool').click();
                 document.getElementById('btnBalances').click();
             } catch (e) {
@@ -433,7 +455,8 @@
       <button class="btn" id="btnFaucet" style="margin-top: 10px; background-color: #3b0764; border-color: #a855f7;">
         🎁 RECIBIR 100 (Faucet)
       </button>
-      </section>
+
+    </section>
 
     <section class="card">
       <h2>2. ✍️ Creación y Firma de Transacción (Remitente)</h2>
