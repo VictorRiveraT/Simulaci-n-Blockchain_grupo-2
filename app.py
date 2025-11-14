@@ -1,19 +1,18 @@
 import sys
+from time import time # Necesario para el fix de timestamp
 from uuid import uuid4
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask import send_from_directory
 
-# Importar la variable FOUNDER_PRIVATE_KEY para comparar
+# Importamos la llave privada para el chequeo de seguridad
 from blockchain import Blockchain, FOUNDER_PRIVATE_KEY
 from keys import Keys
 
 app = Flask(__name__)
 CORS(app) 
 blockchain = Blockchain()
-
-# --- NUEVO: REGISTRO DE ALIAS ---
-alias_registry = {}
+alias_registry = {} # Registro de Alias en memoria
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -23,28 +22,26 @@ def health_check():
 def get_index():
     return send_from_directory('.', 'index.html')
 
-# --- ENDPOINT /faucet MODIFICADO ---
+# --- ENDPOINT /faucet CON SEGURIDAD AÑADIDA ---
 @app.route('/faucet', methods=['POST'])
 def faucet_funds():
     """
-    Reparte fondos del Fundador (Faucet) a una dirección,
-    PERO SÓLO SI se provee la llave privada correcta del admin.
+    Reparte fondos del Fundador (Faucet) a una dirección.
+    Requiere la Llave Privada del Fundador para autenticar.
     """
     values = request.get_json()
     if not values:
         return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
     
     recipient_address = values.get('recipient_address')
-    admin_private_key = values.get('admin_private_key') # <-- CAMPO NUEVO
+    admin_private_key = values.get('admin_private_key')
     
     if not recipient_address or not admin_private_key:
         return jsonify({'message': 'Error: Se requiere "recipient_address" y "admin_private_key".'}), 400
 
-    # --- NUEVA VERIFICACIÓN DE SEGURIDAD ---
-    # Compara la llave enviada con la llave real del servidor
+    # Verificación de Seguridad: La llave debe coincidir con la llave del servidor
     if admin_private_key != FOUNDER_PRIVATE_KEY:
         return jsonify({'message': 'Error: Llave Privada del Fundador inválida. ¡No eres el Admin!'}), 401 # 401 Unauthorized
-    # --- FIN DE VERIFICACIÓN ---
 
     # Si la llave es correcta, proceder:
     success, message = blockchain.issue_faucet_funds(recipient_address)
@@ -56,7 +53,7 @@ def faucet_funds():
         'message': f'¡Éxito! {message}. Se enviaron 100 monedas a tu dirección.',
         'note': 'Deberás minar un bloque para confirmar la transacción.'
     }), 200
-# --- FIN DE MODIFICACIÓN ---
+# --- FIN DE /faucet ---
 
 @app.route('/register_alias', methods=['POST'])
 def register_alias():
@@ -139,6 +136,7 @@ def new_transaction():
     response = {'message': message}
     return jsonify(response), 201
 
+# --- ENDPOINT /mine MODIFICADO PARA EL FIX DE TIMESTAMP ---
 @app.route('/mine', methods=['POST'])
 def mine():
     values = request.get_json()
@@ -151,9 +149,15 @@ def mine():
 
     blockchain.node_id = miner_address
     last_block = blockchain.last_block
-    nonce = blockchain.proof_of_work(last_block)
+    
+    # --- FIX DE CONSISTENCIA ---
+    current_time = time() # Calcular el tiempo una sola vez
+    
+    nonce = blockchain.proof_of_work(last_block, current_time) # Pasar el tiempo fijo
+    
     previous_hash = blockchain._hash(last_block)
-    block = blockchain._new_block(previous_hash, nonce)
+    block = blockchain._new_block(previous_hash, nonce, current_time=current_time) # Usar el tiempo fijo
+    # --- FIN DE FIX ---
 
     response = {
         'message': "¡Nuevo bloque minado!",
@@ -165,6 +169,7 @@ def mine():
     }
     return jsonify(response), 200
 
+# ... (El resto de los endpoints /chain, /mempool, /balances, /leaders, /validate, /nodes/register, /nodes/resolve van aquí) ...
 @app.route('/chain', methods=['GET'])
 def full_chain():
     response = {
