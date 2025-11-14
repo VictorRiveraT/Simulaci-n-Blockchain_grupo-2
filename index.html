@@ -457,18 +457,16 @@
             } catch(e) { log(e,'❌ ERROR /mempool'); } 
         };
 
-        // --- LÓGICA DEL FAUCET MODIFICADA ---
         document.getElementById('btn_faucet_send').onclick = async () => {
             const recipient = document.getElementById('faucet_recipient').value;
-            const private_key = document.getElementById('faucet_private_key').value; // <-- NUEVO
+            const private_key = document.getElementById('faucet_private_key').value;
             let recipient_address = recipient;
 
-            if (!recipient_address || !private_key) { // <-- MODIFICADO
+            if (!recipient_address || !private_key) {
                 log("ERROR: Debes poner un Destinatario Y la Llave Privada del Fundador.", '❌ Error de Faucet');
                 return;
             }
 
-            // Resolver alias si es necesario
             if (!recipient_address.startsWith('04')) {
                 const resolvedKey = aliasCache[recipient_address];
                 if (resolvedKey) {
@@ -486,14 +484,14 @@
                     method:'POST', 
                     body: JSON.stringify({ 
                         recipient_address: recipient_address,
-                        admin_private_key: private_key // <-- NUEVO
+                        admin_private_key: private_key
                     }) 
                 });
                 log(d, '💧 Faucet');
                 document.getElementById('btnShowMempool').click();
                 document.getElementById('btnBalances').click();
             } catch (e) {
-                log(e.data, '❌ ERROR /faucet'); // El error 401 se mostrará aquí
+                log(e.data, '❌ ERROR /faucet');
             }
         };
 
@@ -624,7 +622,7 @@
     
     <section class="card col-span-3">
       <h2>7. Panel de Resultados / Log</h2>
-      <div class="log" id="log"><pre><code>Listo para operar... Por favor, borra o renombra 'chain.json' y reinicia el servidor.</code></pre></div>
+      <div class="log" id="log"></div>
     </section>
 
     <section class="card col-span-3">
