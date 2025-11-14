@@ -4,7 +4,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask import send_from_directory
 
-from blockchain import Blockchain
+# Importar la variable FOUNDER_PRIVATE_KEY para comparar
+from blockchain import Blockchain, FOUNDER_PRIVATE_KEY
 from keys import Keys
 
 app = Flask(__name__)
@@ -12,7 +13,6 @@ CORS(app)
 blockchain = Blockchain()
 
 # --- NUEVO: REGISTRO DE ALIAS ---
-# Un simple diccionario en memoria para guardar: {'alias': 'public_key'}
 alias_registry = {}
 
 @app.route('/health', methods=['GET'])
@@ -23,20 +23,30 @@ def health_check():
 def get_index():
     return send_from_directory('.', 'index.html')
 
+# --- ENDPOINT /faucet MODIFICADO ---
 @app.route('/faucet', methods=['POST'])
 def faucet_funds():
     """
-    Reparte fondos del Fundador (Faucet) a una dirección.
-    (Este endpoint no cambia, ya es seguro)
+    Reparte fondos del Fundador (Faucet) a una dirección,
+    PERO SÓLO SI se provee la llave privada correcta del admin.
     """
     values = request.get_json()
     if not values:
         return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
     
     recipient_address = values.get('recipient_address')
-    if not recipient_address:
-        return jsonify({'message': 'Error: Se requiere "recipient_address".'}), 400
+    admin_private_key = values.get('admin_private_key') # <-- CAMPO NUEVO
+    
+    if not recipient_address or not admin_private_key:
+        return jsonify({'message': 'Error: Se requiere "recipient_address" y "admin_private_key".'}), 400
 
+    # --- NUEVA VERIFICACIÓN DE SEGURIDAD ---
+    # Compara la llave enviada con la llave real del servidor
+    if admin_private_key != FOUNDER_PRIVATE_KEY:
+        return jsonify({'message': 'Error: Llave Privada del Fundador inválida. ¡No eres el Admin!'}), 401 # 401 Unauthorized
+    # --- FIN DE VERIFICACIÓN ---
+
+    # Si la llave es correcta, proceder:
     success, message = blockchain.issue_faucet_funds(recipient_address)
     
     if not success:
@@ -46,13 +56,10 @@ def faucet_funds():
         'message': f'¡Éxito! {message}. Se enviaron 100 monedas a tu dirección.',
         'note': 'Deberás minar un bloque para confirmar la transacción.'
     }), 200
+# --- FIN DE MODIFICACIÓN ---
 
-# --- NUEVO ENDPOINT: /register_alias ---
 @app.route('/register_alias', methods=['POST'])
 def register_alias():
-    """
-    Registra un alias (nombre) para una llave pública.
-    """
     values = request.get_json()
     if not values:
         return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
@@ -63,11 +70,9 @@ def register_alias():
     if not alias or not public_key:
         return jsonify({'message': 'Error: Se requiere "alias" y "public_key".'}), 400
 
-    # Verificar si el alias ya está tomado
     if alias in alias_registry:
         return jsonify({'message': f'Error: El alias "{alias}" ya está tomado.'}), 400
         
-    # Verificar si la llave ya tiene un alias
     if public_key in alias_registry.values():
          return jsonify({'message': 'Error: Esta Llave Pública ya tiene un alias registrado.'}), 400
 
@@ -75,12 +80,8 @@ def register_alias():
     print(f"Registro de Alias: {alias} -> {public_key}")
     return jsonify({'message': f'¡Éxito! Alias "{alias}" registrado.'}), 201
 
-# --- NUEVO ENDPOINT: /aliases ---
 @app.route('/aliases', methods=['GET'])
 def get_aliases():
-    """
-    Retorna la lista completa de alias.
-    """
     return jsonify(alias_registry), 200
 
 @app.route('/transactions/verify_only', methods=['POST'])
