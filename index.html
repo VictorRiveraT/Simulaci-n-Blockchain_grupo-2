@@ -1,321 +1,531 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador Blockchain - ECDSA + PoW</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #0d1117;
-            color: #c9d1d9;
-            margin: 0;
-            padding: 24px;
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Blockchain Simulator — ECDSA & PoW</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --danger:#ef4444; --border:#1f2937; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial; background: var(--bg); color: var(--text); }
+    header { padding: 24px; border-bottom:1px solid var(--border); position: sticky; top:0; background: linear-gradient(180deg, #0f172a 0%, rgba(15,23,42,.9) 100%); backdrop-filter: blur(6px); }
+    h1 { margin:0; font-size: 20px; }
+    main { max-width: 1400px; margin: 24px auto; padding: 0 16px 48px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .col-span-2 { grid-column: span 2; }
+    .col-span-3 { grid-column: span 3; }
+    .card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding: 16px; }
+    .card h2 { margin:0 0 10px 0; font-size: 18px; }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom:6px; }
+    input, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#0b1220; color:var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn { cursor:pointer; border:1px solid var(--border); background:#0b1220; color:var(--text); padding:10px 12px; border-radius:10px; transition: .15s ease; }
+    .btn:hover { transform: translateY(-1px); border-color:#2b3447; }
+    .btn.primary { border-color: #14532d; background:#0b1d12; }
+    .btn.primary:hover { border-color:#16a34a; }
+    .btn.danger { border-color:#3f1f25; background:#1a0b0d; }
+    .muted { color: var(--muted); font-size: 12px; }
+    pre { margin:0; white-space: pre-wrap; word-break: break-word; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
+    .log { background:#0b1220; border:1px dashed #273043; border-radius:12px; padding:12px; max-height: 460px; overflow:auto; }
+    .badge { display:inline-block; font-size:11px; padding:2px 8px; border:1px solid #2b3447; border-radius:999px; color:#a3e2b5; background:#0b1d12; margin-left:8px; }
+    .grid-4 { display:grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .footer { text-align:center; color:var(--muted); font-size:12px; padding: 16px; border-top:1px solid var(--border); }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; border:1px solid #2b3447; }
+    .table { width: 100%; border-collapse: collapse; border:1px solid var(--border); background:#0b1220; border-radius: 12px; overflow: hidden; }
+    .table th, .table td { padding:10px 12px; font-size:13px; border-bottom:1px solid #1e293b; word-break: break-all; }
+    .table th { text-align:left; color:#93c5fd; background:#0a1222; }
+    .table tr:hover td { background:#0c1527; }
+    .kpi { display:flex; align-items:center; gap:10px; margin:6px 0 12px 0; color:var(--muted); }
+    .validation-card.valid { border-color: var(--accent); animation: flashGreen 0.5s ease-out; }
+    .validation-card.invalid { border-color: var(--danger); animation: flashRed 0.5s ease-out; }
+    @keyframes flashGreen {
+        0% { border-color: var(--border); }
+        50% { border-color: var(--accent); }
+        100% { border-color: var(--border); }
+    }
+    @keyframes flashRed {
+        0% { border-color: var(--border); }
+        50% { border-color: var(--danger); }
+        100% { border-color: var(--border); }
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+  <script>
+    const EC = elliptic.ec;
+    const ec = new EC('secp256k1');
+    
+    // --- Utilidades Criptográficas ---
+    const stableStringify = (v) => {
+      if (v === null || typeof v !== 'object') return JSON.stringify(v);
+      if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+      const keys = Object.keys(v).sort();
+      return '{' + keys.map(k => JSON.stringify(k)+':'+stableStringify(v[k])).join(',') + '}';
+    };
+
+    const hashPayload = (payload) => {
+        const payloadCopy = { ...payload };
+        delete payloadCopy.signature;
+        const s = stableStringify(payloadCopy);
+        return sha256(s);
+    };
+
+    const generateKeyPair = () => {
+        const key = ec.genKeyPair();
+        const privateKeyHex = key.getPrivate('hex');
+        const publicKeyHex = key.getPublic('hex'); 
+        return { privateKeyHex, publicKeyHex };
+    };
+
+    const signTransaction = (privateKeyHex, payload) => {
+        try {
+            const key = ec.keyFromPrivate(privateKeyHex, 'hex');
+            const payloadHash = hashPayload(payload);
+            const signature = key.sign(payloadHash, 'hex');
+            return signature.toDER('hex'); 
+        } catch (e) {
+            console.error("Error signing:", e);
+            return "";
         }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+    };
+    
+    const verifySignatureJS = (public_key_hex, signature_hex, payload) => {
+        try {
+            const verifyingKey = ec.keyFromPublic(public_key_hex, 'hex');
+            const payloadHash = hashPayload(payload);
+            return verifyingKey.verify(payloadHash, signature_hex);
+        } catch (e) {
+            console.error("Error verifying signature in JS:", e);
+            return false;
         }
-        header h1 {
-            color: #58a6ff;
-            border-bottom: 1px solid #30363d;
-            padding-bottom: 10px;
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 24px;
-        }
-        .panel {
-            background-color: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 20px;
-        }
-        .panel h2 {
-            margin-top: 0;
-            color: #58a6ff;
-            border-bottom: 1px solid #30363d;
-            padding-bottom: 8px;
-        }
-        label, button, .query-buttons button {
-            display: block;
-            width: 100%;
-            margin-bottom: 10px;
-            box-sizing: border-box;
-        }
-        input, textarea {
-            display: block;
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            background-color: #0d1117;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            border-radius: 6px;
-            box-sizing: border-box;
-        }
-        textarea {
-            min-height: 80px;
-            font-family: monospace;
-        }
-        button, .query-buttons button {
-            background-color: #238636;
-            color: white;
-            padding: 12px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
-            font-size: 15px;
-            text-align: center;
-        }
-        button:hover, .query-buttons button:hover {
-            background-color: #2ea043;
-        }
-        button.secondary {
-            background-color: #21262d;
-            border: 1px solid #30363d;
-        }
-        button.secondary:hover {
-            background-color: #30363d;
-        }
-        .query-buttons {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 20px;
-        }
-        #results-panel {
-            margin-top: 24px;
-            background-color: #010409;
-        }
-        #results-panel h2 {
-            color: #3fb950;
-        }
-        #results-log {
-            background-color: #0d1117;
-            color: #c9d1d9;
-            border: 1px solid #30363d;
-            padding: 15px;
-            height: 400px;
-            overflow-y: scroll;
-            border-radius: 6px;
-            font-family: monospace;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        .status {
-            font-size: 1.1em;
-            font-family: monospace;
-            margin-left: 10px;
-        }
-        .status.ok { color: #3fb950; }
-        .status.error { color: #f85149; }
-    </style>
+    };
+
+    const pubToAddress = (publicKeyHex) => {
+        if (!publicKeyHex) return "";
+        return publicKeyHex.substring(0, 40);
+    };
+
+    // --- Utilidades UI ---
+    const log = (obj, title) => {
+      const el = document.getElementById('log');
+      const prev = el.innerHTML;
+      const now = `<pre><code>${title ? '▶ ' + title + '\n' : ''}${typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)}</code></pre>`;
+      el.innerHTML = now + '\n' + prev;
+    };
+    const setBadge = (ok, extra='') => {
+      const b = document.getElementById('statusBadge');
+      if (ok) { b.textContent = 'Status: OK ' + extra; b.style.color = '#86efac'; }
+      else { b.textContent = 'Status: ERROR ' + extra; b.style.color = '#fca5a5'; }
+    };
+    const api = (path, opts={}) =>
+      fetch(path, { headers: { 'Content-Type':'application/json' }, ...opts })
+        .then(async r => {
+          const data = await r.json().catch(()=>({raw:'(sin JSON)'}));
+          if (!r.ok) throw { status: r.status, data };
+          return data;
+        });
+        
+    const renderTable = (title, dataObj, containerId, valueLabel='Valor') => {
+      const container = document.getElementById(containerId);
+      const entries = Object.entries(dataObj || {});
+      if (!entries.length) {
+        container.innerHTML = `<div class="muted">Sin datos por ahora.</div>`;
+        return;
+      }
+      const rows = entries
+        .map(([k,v],i) => {
+            const displayValue = Number(v); 
+            return `
+              <tr>
+                <td style="width:56px;">#${i+1}</td>
+                <td><code>${pubToAddress(k)}</code></td>
+                <td style="text-align:right">${displayValue}</td>
+              </tr>
+            `;
+        }).join('');
+      container.innerHTML = `
+        <div class="muted" style="margin:6px 0 8px 0;">${title}</div>
+        <table class="table">
+          <thead>
+            <tr><th>#</th><th>Address (Public Key)</th><th style="text-align:right">${valueLabel}</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    };
+
+    const renderMempool = (transactions, containerId='mempoolResults') => {
+      const container = document.getElementById(containerId);
+      if (transactions.length === 0) {
+        container.innerHTML = '<div class="muted">El Mempool está vacío.</div>';
+        return;
+      }
+
+      const rows = transactions.map((tx, i) => {
+        const displayAmount = Number(tx.amount); // Monto entero
+        return `
+                <tr>
+                    <td style="width: 30px;">#${i + 1}</td>
+                    <td style="width: 100px; text-align:right;">${displayAmount}</td>
+                    <td><code>${pubToAddress(tx.sender)}...</code></td>
+                    <td><code>${pubToAddress(tx.recipient)}...</code></td>
+                    <td>${new Date(tx.timestamp * 1000).toLocaleTimeString()}</td>
+                </tr>
+            `;
+      }).join('');
+
+      container.innerHTML = `
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th style="text-align:right;">Monto</th>
+                        <th>Remitente</th>
+                        <th>Destinatario</th>
+                        <th>Hora</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    };
+    
+    // --- Lógica del Simulador ---
+    
+    let lastVerifiedTransaction = null; 
+
+    window.addEventListener('load', () => {
+        // 1. Generación de Llaves
+        document.getElementById('btnRandomKeys').onclick = () => {
+            const { privateKeyHex, publicKeyHex } = generateKeyPair();
+            if (privateKeyHex && publicKeyHex) { 
+                document.getElementById('privateKey').value = privateKeyHex;
+                document.getElementById('publicKey').value = publicKeyHex;
+                document.getElementById('sender_pub_tx').value = publicKeyHex; 
+                document.getElementById('miner_address').value = publicKeyHex; 
+                log({ privateKeyHex, publicKeyHex }, '🗝️ Llaves Generadas');
+            } else {
+                log("ERROR: La generación de claves falló. Revisa la consola (F12).", '❌ Error de Criptografía');
+            }
+            document.getElementById('btnBalances').click();
+            document.getElementById('signature_node').value = '';
+            document.getElementById('publickey_node').value = '';
+            document.getElementById('btnSendToMempool').disabled = true;
+            document.getElementById('validationCard').classList.remove('valid', 'invalid');
+            lastVerifiedTransaction = null;
+        };
+
+        // 2. Firma de Transacción (Remitente)
+        document.getElementById('btnSignTx').onclick = () => {
+            const privateKeyHex = document.getElementById('privateKey').value;
+            const senderPub = document.getElementById('sender_pub_tx').value;
+            const recipient = document.getElementById('recipient_tx').value;
+            
+            // 🛑 FIX: Usamos el valor de entrada directamente (debe ser INT)
+            const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
+            const amount_int = Math.round(amount_input); 
+
+            if (!privateKeyHex || !senderPub) {
+                log("ERROR: Debes generar y seleccionar las Llaves primero.", '❌ Error de Firma');
+                return;
+            }
+            if (!recipient || amount_int <= 0) {
+                log("ERROR: Monto de transacción debe ser positivo (entero).", '❌ Error de Firma');
+                return;
+            }
+
+            // 🛑 Payload final, con montos enteros directos y orden alfabético (A, R, S)
+            const payload = {
+                amount: amount_int, 
+                recipient: recipient, 
+                sender: senderPub,
+            };
+            
+            const signature = signTransaction(privateKeyHex, payload);
+            document.getElementById('signature_tx').value = signature;
+            log({ payload, signature, hash: hashPayload(payload) }, '✍️ Transacción Firmada');
+
+            // Autocompletar el bloque de verificación del Nodo Central
+            document.getElementById('signature_node').value = signature;
+            document.getElementById('publickey_node').value = senderPub;
+            document.getElementById('btnSendToMempool').disabled = true; 
+            document.getElementById('validationCard').classList.remove('valid', 'invalid');
+            lastVerifiedTransaction = null;
+        };
+        
+        // --- 3. Nodo Central: Verificación de Firma y Fondos ---
+        const validationCard = document.getElementById('validationCard');
+        const btnSendToMempool = document.getElementById('btnSendToMempool');
+        btnSendToMempool.disabled = true; 
+
+        document.getElementById('btnVerifyTxNode').onclick = async () => {
+            // --- CÓDIGO CORREGIDO: TOMA EL PAYLOAD DE LA SECCIÓN 2 ---
+            const sender_pub = document.getElementById('sender_pub_tx').value;
+            const recipient = document.getElementById('recipient_tx').value;
+            
+            const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
+            const amount_int = Math.round(amount_input);
+
+            const signature = document.getElementById('signature_node').value;
+            const publickey_for_verification = document.getElementById('publickey_node').value;
+            // -----------------------------------------------------------
+
+            if (!sender_pub || !signature || !recipient || amount_int <= 0 || !publickey_for_verification) {
+                log("ERROR: Rellenar todos los campos de Tx, Public Key y Firma.", '❌ Error de Verificación');
+                validationCard.classList.remove('valid');
+                validationCard.classList.add('invalid');
+                btnSendToMempool.disabled = true;
+                return;
+            }
+
+            // 1. Crear el payload EXACTO que se firmó (sin fee)
+            const payloadForVerification = {
+                amount: amount_int,
+                recipient: recipient,
+                sender: publickey_for_verification,
+            };
+
+            // 🛑 Delegamos a Flask
+            try {
+                const verificationResult = await api('/transactions/verify_only', {
+                    method: 'POST',
+                    body: JSON.stringify({ 
+                        sender_pub: publickey_for_verification, 
+                        recipient: recipient, 
+                        amount: amount_int, // <- ENVIAR ENTERO
+                        signature: signature,
+                    })
+                });
+
+                if (verificationResult && verificationResult.valid) {
+                    log("VERIFICACIÓN EXITOSA (BACKEND): Firma válida y fondos suficientes.", '✅ Verificación Exitosa');
+                    validationCard.classList.remove('invalid');
+                    validationCard.classList.add('valid');
+                    btnSendToMempool.disabled = false;
+                    // Guardamos la transacción con los enteros
+                    lastVerifiedTransaction = { sender_pub: publickey_for_verification, recipient, amount: amount_int, signature: signature };
+
+                } else {
+                    log(verificationResult.error || "VERIFICACIÓN FALLIDA: Fondos insuficientes o error en el backend.", '❌ Verificación Fallida');
+                    validationCard.classList.remove('valid');
+                    validationCard.classList.add('invalid');
+                    btnSendToMempool.disabled = true;
+                }
+
+            } catch (e) {
+                log(e.data?.error || "VERIFICACIÓN FALLIDA: Error al comunicarse con el nodo.", '❌ Verificación Fallida');
+                validationCard.classList.remove('valid');
+                validationCard.classList.add('invalid');
+                btnSendToMempool.disabled = true;
+            }
+        };
+
+        document.getElementById('btnSendToMempool').onclick = async () => {
+            if (!lastVerifiedTransaction) {
+                log("ERROR: Primero debes verificar la transacción.", '❌ Error de Envío');
+                return;
+            }
+            
+            try { 
+                const d = await api('/transactions/new', { 
+                    method:'POST', 
+                    body: JSON.stringify(lastVerifiedTransaction) 
+                }); 
+                log(d, '✅ Transacción Añadida al Mempool');
+                document.getElementById('btnShowMempool').click();
+                document.getElementById('btnBalances').click();
+                
+                // Resetear estado después del envío
+                btnSendToMempool.disabled = true;
+                validationCard.classList.remove('valid', 'invalid');
+                lastVerifiedTransaction = null;
+
+            } catch (e) { 
+                log(e, '❌ ERROR al enviar al Mempool'); 
+                document.getElementById('btnBalances').click();
+            }
+        };
+
+        // --- 4. Minería ---
+        document.getElementById('btnMine').onclick = async () => {
+            const miner_address = document.getElementById('miner_address').value;
+            if (!miner_address) {
+                log("ERROR: La dirección del minero no puede estar vacía.", '❌ Error de Minado');
+                return;
+            }
+            const t0 = performance.now();
+            try { 
+                const d = await api('/mine', { method:'POST', body: JSON.stringify({ miner_address }) }); 
+                const t1 = performance.now(); 
+                log({ tiempo_ms: Math.round(t1-t0), ...d }, '⛏️ Bloque Minado'); 
+                document.getElementById('btnChain').click();
+                document.getElementById('btnLeaders').click();
+                document.getElementById('btnBalances').click();
+                document.getElementById('btnShowMempool').click(); 
+
+            } catch (e) { 
+                log(e, '❌ ERROR /mine'); 
+            }
+        };
+
+        // --- Consultas ---
+        document.getElementById('btnHealth').onclick = async () => {
+          try { const d = await api('/health'); setBadge(true, `(diff=${d.difficulty})`); log(d, '/health'); }
+          catch (e) { setBadge(false); log(e, '❌ ERROR /health'); }
+        };
+        document.getElementById('btnChain').onclick = async () => { try { log(await api('/chain'), '🔗 /chain'); } catch(e){ log(e,'❌ ERROR /chain'); } };
+        document.getElementById('btnValidate').onclick = async () => { try { log(await api('/validate'), '🛡️ /validate'); } catch(e){ log(e,'❌ ERROR /validate'); } };
+        document.getElementById('btnLeaders').onclick = async () => {
+          try { 
+            const d = await api('/leaders');
+            log(d, '👑 /leaders (Ranking)');                 
+            renderTable('Recompensas acumuladas por minero', d, 'leadersTable', 'Recompensa');
+          } catch (e) { log(e, '❌ ERROR /leaders'); }
+        };
+        document.getElementById('btnBalances').onclick = async () => {
+          try { 
+            const d = await api('/balances');
+            log(d, '💰 /balances (Saldos)');
+            renderTable('Saldo neto por address (Public Key)', d, 'balancesTable', 'Saldo');
+          } catch (e) { log(e, '❌ ERROR /balances'); }
+        };
+
+        document.getElementById('btnShowMempool').onclick = async () => { try { const d = await api('/mempool'); renderMempool(d, 'mempoolResults'); log(d, '📝 /mempool (Transacciones Pendientes)'); } catch(e){ log(e,'❌ ERROR /mempool'); } };
+
+        // Autocarga inicial
+        document.getElementById('btnHealth').click();
+        document.getElementById('btnBalances').click();
+    });
+  </script>
 </head>
 <body>
+  <header>
+    <h1>Simulador Blockchain 🔐 ECDSA + PoW <span class="badge" id="statusBadge">Status: ...</span></h1>
+    <div class="muted">El código fuente ha sido modificado para usar Llaves Públicas como direcciones y verificar Firmas y Fondos.</div>
+  </header>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+  <main>
+    <section class="card">
+      <h2>1. 🗝️ Generación de Identidad (Usuario)</h2>
+      <label>Llave Privada (Private Key - ¡Secreta!)</label>
+      <input id="privateKey" placeholder="Generar clave aleatoria..." />
+      <div style="height:10px"></div>
+      <label>Llave Pública (Public Key - Dirección)</label>
+      <textarea id="publicKey" rows="3" placeholder="Esta es la dirección FROM/TO"></textarea>
+      <div style="height:10px"></div>
+      <button class="btn primary" id="btnRandomKeys">RANDOM (Generar Par)</button>
+    </section>
 
-    <div class="container">
-        <header>
-            <h1>Simulador Blockchain <span style="color: #c9d1d9;">ECDSA + PoW</span>
-                <span id="status-light" class="status">Checking...</span>
-            </h1>
-        </header>
+    <section class="card">
+      <h2>2. ✍️ Creación y Firma de Transacción (Remitente)</h2>
+      <label>Remitente (sender_pub - Copia la Public Key de arriba)</label>
+      <textarea id="sender_pub_tx" rows="2" placeholder="Llave Pública COMPLETA del remitente (FROM)"></textarea>
+      <div style="height:10px"></div>
+      <label>Destinatario (recipient)</label>
+      <input id="recipient_tx" placeholder="Llave Pública de otro usuario (TO)" value="04634f590b074a123f81e3630f146a066c06173a144e54e4c9c221191060934e6284f1b4a558509c2a8c3d706f9d34346747530e7d0263f10646c8a513511111" />
+      <div style="height:10px"></div>
+      <label>Monto (amount)</label>
+      <input id="amount_tx" type="number" step="1" placeholder="10" value="10" /> 
+      
+      <div style="height:10px"></div>
+      <button class="btn" id="btnSignTx">SIGN (Firmar con Private Key)</button>
+      <div style="height:10px"></div>
+      <label>Firma de Transacción (Message Signature)</label>
+      <textarea id="signature_tx" rows="2" placeholder="Se genera al firmar el payload..."></textarea>
+    </section>
 
-        <div class="grid">
-            <div class="panel">
-                <h2>1. Generación de Identidad (Usuario)</h2>
-                
-                <label for="private_key">Llave Privada (Private Key - Secreta)</label>
-                <textarea id="private_key" rows="2" placeholder="Generar clave aleatoria..."></textarea>
-                
-                <label for="public_key">Llave Pública (Public Key - Dirección)</label>
-                <textarea id="public_key" rows="3" placeholder="Esta es la dirección FROM/TO"></textarea>
-                
-                <button id="btn-generate-keys">RANDOM (Generar Par)</button>
+    <section class="card validation-card" id="validationCard">
+      <h2>3. 🛡️ Nodo Central: Verificación de Firma y Fondos</h2>
+      <div class="muted">
+        El Nodo Central verifica la autenticidad (firma) y la disponibilidad de fondos antes de aceptar una transacción.
+      </div>
+      <div style="height:16px"></div>
+
+      <label>Firma del Mensaje (Message Signature)</label>
+      <textarea id="signature_node" rows="2" placeholder="Copia la firma de la sección 2"></textarea>
+      <div style="height:10px"></div>
+      <label>Llave Pública del Remitente (Public Key)</label>
+      <textarea id="publickey_node" rows="2" placeholder="Copia la Public Key del Remitente de la sección 2"></textarea>
+      <div style="height:10px"></div>
+
+      <div class="row">
+          <button class="btn" id="btnVerifyTxNode">VERIFY</button>
+          <button class="btn primary" id="btnSendToMempool">SEND al Mempool</button>
+      </div>
+    </section>
+    
+    <div class="card col-span-3" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px;">
+        
+        <div class="card" style="margin: 0; padding: 0;">
+            <h2>4. 📝 Mempool (Transacciones Pendientes)</h2>
+            <div class="muted" style="margin-bottom: 10px;">
+                Transacciones válidas esperando ser incluidas en el próximo bloque por un minero.
             </div>
-
-            <div class="panel">
-                <h2>2. Creación y Envío de Transacción</h2>
-                
-                <label for="sender_public_key">Remitente (sender pub) - Copia la Public Key de arriba</label>
-                <textarea id="sender_public_key" rows="3" placeholder="Llave Pública COMPLETA del remitente (FROM)"></textarea>
-
-                <label for="recipient">Destinatario (recipient)</label>
-                <input id="recipient" type="text" placeholder="Pega la Llave Pública (dirección) del destinatario">
-
-                <label for="amount">Monto (amount)</label>
-                <input id="amount" type="number" step="0.1" value="1.0">
-                
-                <label for="signature">Firma de Transacción (Message Signature)</label>
-                <textarea id="signature" rows="3" placeholder="Se genera al firmar el payload..." readonly></textarea>
-                
-                <button id="btn-sign-send">SIGN y VERIFY & SEND al Mempool</button>
-            </div>
-
-            <div class="panel">
-                <h2>3. Minería y Lectura (Nodo)</h2>
-                
-                <label for="miner_public_key">Dirección del minero (Public Key)</label>
-                <input id="miner_public_key" type="text" placeholder="Pega aquí la Public Key para recibir la recompensa...">
-
-                <button id="btn-mine">MINAR Bloque (PoW)</button>
-
-                <div class="query-buttons">
-                    <button class="secondary" id="btn-chain">Ver Cadena (/chain)</button>
-                    <button class="secondary" id="btn-mempool">Ver Mempool (/mempool)</button>
+            <button class="btn" id="btnShowMempool">Ver Mempool Actual</button>
+            <div style="margin-top: 15px;">
+                <div id="mempoolResults">
+                    <div class="muted">Haz clic en "Ver Mempool Actual" para ver transacciones pendientes.</div>
                 </div>
             </div>
         </div>
 
-        <div class="panel" id="results-panel">
-            <h2>Resumen y Panel de Resultados / Log</h2>
-            <div id="results-log">Bienvenido al Simulador. Iniciando...</div>
-        </div>
+        <div class="card" style="margin: 0; padding: 0;">
+            <h2>5. ⛏️ Proceso de Minado (Nodo)</h2>
+            <label>Dirección del minero (Public Key)</label>
+            <textarea id="miner_address" rows="2" placeholder="Pega aquí la Public Key para recibir la recompensa..."></textarea>
+            <div style="height:10px"></div>
+            <button class="btn primary" id="btnMine">MINAR Bloque (PoW)</button>
+            <div style="height:20px"></div>
 
+            <h3>Bloque Candidato (Resultado)</h3>
+            <div class="muted">
+                Haz clic en MINAR para calcular el hash del siguiente bloque.
+            </div>
+            
+            <div id="blockCandidateDisplay" class="card" style="margin-top:10px; border:1px solid #475569; background:#0b1d22; padding: 10px;">
+                <p><strong>Bloque N°:</strong> <span id="blockIndex">...</span></p>
+                <p><strong>Nonce encontrado:</strong> <span id="blockNonce">...</span></p>
+                <p><strong>Prev Hash:</strong> <code id="blockPrevHash">...</code></p>
+                <hr style="border-color:#475569;">
+                <h4>Transacciones (Mempool incluido):</h4>
+                <div id="blockTxsList">
+                    <p class="muted">Carga el Mempool para ver el contenido a minar.</p>
+                </div>
+                <hr style="border-color:#475569;">
+                <p><strong>HASH VÁLIDO:</strong> <code id="blockHash">...</code></p>
+            </div>
+        </div>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
+    <section class="card col-span-3">
+      <h2>6. Resumen Económico (Validado por la Cadena)</h2>
+      <div class="row">
+        <div><div id="leadersTable"></div></div>
+        <div><div id="balancesTable"></div></div>
+      </div>
+    </section>
+    
+    <section class="card col-span-3">
+      <h2>7. Panel de Resultados / Log</h2>
+      <div class="log" id="log"><pre><code>Listo para operar... Por favor, borra o renombra 'chain.json' y reinicia el servidor.</code></pre></div>
+    </section>
 
-            const API_BASE_URL = '';
+    <section class="card col-span-3">
+      <h2>8. Consultas de Cadena</h2>
+      <div class="grid-4">
+        <button class="btn" id="btnHealth">/health</button>
+        <button class="btn" id="btnChain">/chain</button>
+        <button class="btn" id="btnValidate">/validate</button>
+        <button class="btn" id="btnLeaders">/leaders</button>
+        <button class="btn" id="btnBalances">/balances</button>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    </section>
+  </main>
 
-            const ec = new elliptic.ec('secp256k1');
-
-            const logElement = document.getElementById('results-log');
-            const statusLight = document.getElementById('status-light');
-            
-            const btnGenerateKeys = document.getElementById('btn-generate-keys');
-            const privateKeyInput = document.getElementById('private_key');
-            const publicKeyInput = document.getElementById('public_key');
-
-            const btnSignSend = document.getElementById('btn-sign-send');
-            const senderPublicKeyInput = document.getElementById('sender_public_key');
-            const recipientInput = document.getElementById('recipient');
-            const amountInput = document.getElementById('amount');
-            const signatureInput = document.getElementById('signature');
-
-            const btnMine = document.getElementById('btn-mine');
-            const minerPublicKeyInput = document.getElementById('miner_public_key');
-            const btnChain = document.getElementById('btn-chain');
-            const btnMempool = document.getElementById('btn-mempool');
-
-            const log = (message, data = null) => {
-                const timestamp = new Date().toLocaleTimeString();
-                logElement.innerHTML = `[${timestamp}] ${message}\n` + 
-                                       (data ? `${JSON.stringify(data, null, 2)}\n\n` : '\n') + 
-                                       logElement.innerHTML;
-            };
-
-            const apiCall = async (method, endpoint, body = null) => {
-                try {
-                    const options = {
-                        method: method,
-                        headers: { 'Content-Type': 'application/json' }
-                    };
-                    if (body) {
-                        options.body = JSON.stringify(body);
-                    }
-                    
-                    const response = await fetch(API_BASE_URL + endpoint, options);
-                    const data = await response.json();
-
-                    if (!response.ok) {
-                        throw new Error(data.message || `Error ${response.status}`);
-                    }
-                    
-                    log(`[${method}] ${endpoint} - ÉXITO`, data);
-                    return data;
-
-                } catch (error) {
-                    log(`[${method}] ${endpoint} - ERROR`, { error: error.message });
-                    return null;
-                }
-            };
-            
-            const checkHealth = async () => {
-                const data = await apiCall('GET', '/health');
-                if (data && data.status === 'OK') {
-                    statusLight.textContent = 'Online';
-                    statusLight.className = 'status ok';
-                    log('Servidor conectado exitosamente.');
-                } else {
-                    statusLight.textContent = 'Offline';
-                    statusLight.className = 'status error';
-                    log('Error: No se pudo conectar al servidor en ' + API_BASE_URL);
-                }
-            };
-
-            btnGenerateKeys.onclick = async () => {
-                log('Generando nuevo par de llaves...');
-                const data = await apiCall('GET', '/keys/new');
-                if (data) {
-                    privateKeyInput.value = data.private_key;
-                    publicKeyInput.value = data.public_key;
-                    
-                    senderPublicKeyInput.value = data.public_key;
-                    minerPublicKeyInput.value = data.public_key;
-                }
-            };
-            
-            btnSignSend.onclick = async () => {
-                log('Iniciando firma y envío de transacción...');
-                
-                const privateKeyHex = privateKeyInput.value;
-                const senderPublicKey = senderPublicKeyInput.value;
-                const recipient = recipientInput.value;
-                const amount = parseFloat(amountInput.value);
-
-                if (!privateKeyHex || !senderPublicKey || !recipient || !amount) {
-                    log('ERROR: Faltan datos (Llave Privada, Llave Pública, Destinatario o Monto).');
-                    return;
-                }
-
-                try {
-                    const message = `${senderPublicKey}${recipient}${amount}`;
-
-                    const messageHash = CryptoJS.SHA256(message).toString();
-
-                    const keyPair = ec.keyFromPrivate(privateKeyHex, 'hex');
-                    const signature = keyPair.sign(messageHash, 'hex').toDER('hex');
-                    
-                    signatureInput.value = signature;
-                    log(`Mensaje: ${message}\nHash: ${messageHash}\nFirma: ${signature}`);
-
-                    const payload = {
-                        sender_public_key: senderPublicKey,
-                        recipient: recipient,
-                        amount: amount,
-                        signature: signature,
-                        message_hash: messageHash
-                    };
-                    await apiCall('POST', '/transactions/new', payload);
-
-                } catch (error) {
-                    log('ERROR DURANTE LA FIRMA', { error: error.message });
-                }
-            };
-            
-            btnMine.onclick = async () => {
-                const minerKey = minerPublicKeyInput.value;
-                if (!minerKey) {
-                    log('ERROR: Se necesita una "Dirección del minero (Public Key)" para recibir la recompensa.');
-                    return;
-                }
-                
-                log('Iniciando minado (Proof of Work)... Esto puede tardar unos segundos.');
-                await apiCall('POST', '/mine', { miner_public_key: minerKey });
-            };
-
-            btnChain.onclick = () => apiCall('GET', '/chain');
-            btnMempool.onclick = () => apiCall('GET', '/mempool');
-
-            checkHealth();
-        });
-    </script>
+  <div class="footer">Este simulador requiere las librerías Flask, ecdsa, y js-sha256/elliptic en el frontend.</div>
 </body>
 </html>
