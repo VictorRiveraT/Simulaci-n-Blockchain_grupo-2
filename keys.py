@@ -79,3 +79,32 @@ class Keys:
             
         except (ecdsa.BadSignatureError, binascii.Error, ValueError):
             return False
+
+    # --- NUEVA FUNCIÓN AÑADIDA ---
+    @staticmethod
+    def sign_digest(private_key_hex: str, digest_hex: str) -> str:
+        """
+        Firma un hash (digest) que ya ha sido calculado.
+        
+        Args:
+            private_key_hex (str): La llave privada en formato hexadecimal.
+            digest_hex (str): El hash SHA-256 del mensaje en formato hexadecimal.
+        
+        Retorna:
+            str: La firma DER-encoded en formato hexadecimal.
+        """
+        try:
+            private_key_bytes = binascii.unhexlify(private_key_hex)
+            private_key = ecdsa.SigningKey.from_string(private_key_bytes, curve=CURVE)
+            
+            message_hash = binascii.unhexlify(digest_hex)
+            
+            signature = private_key.sign_digest(
+                message_hash,
+                sigencode=ecdsa.util.sigencode_der
+            )
+            
+            return binascii.hexlify(signature).decode('utf-8')
+            
+        except (binascii.Error, ValueError):
+            return ""
