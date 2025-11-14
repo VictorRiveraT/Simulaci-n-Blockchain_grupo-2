@@ -55,6 +55,10 @@
   <script>
     const EC = elliptic.ec;
     const ec = new EC('secp256k1');
+
+    // --- NUEVO: CACHE DE ALIAS ---
+    let aliasCache = {}; // {'alias': 'pubkey'}
+    let reverseAliasCache = {}; // {'pubkey': 'alias'}
     
     // --- Utilidades Criptográficas ---
     const stableStringify = (v) => {
@@ -90,20 +94,15 @@
         }
     };
     
-    const verifySignatureJS = (public_key_hex, signature_hex, payload) => {
-        try {
-            const verifyingKey = ec.keyFromPublic(public_key_hex, 'hex');
-            const payloadHash = hashPayload(payload);
-            return verifyingKey.verify(payloadHash, signature_hex);
-        } catch (e) {
-            console.error("Error verifying signature in JS:", e);
-            return false;
-        }
-    };
-
     const pubToAddress = (publicKeyHex) => {
-        if (!publicKeyHex) return "";
-        return publicKeyHex.substring(0, 40);
+        if (!publicKeyHex || publicKeyHex.length < 40) return publicKeyHex;
+        // NUEVO: Chequear si es una llave del sistema
+        if (publicKeyHex === 'SYSTEM' || publicKeyHex === '0000_GENESIS_0000') return publicKeyHex;
+        
+        // NUEVO: Mostrar alias si existe
+        const alias = reverseAliasCache[publicKeyHex];
+        const shortKey = publicKeyHex.substring(0, 40) + '...';
+        return alias ? `${alias} (${shortKey})` : shortKey;
     };
 
     // --- Utilidades UI ---
@@ -126,6 +125,22 @@
           return data;
         });
         
+    // --- NUEVA FUNCIÓN: Actualizar Caches de Alias ---
+    const updateAliasCaches = async () => {
+        try {
+            const data = await api('/aliases');
+            aliasCache = data;
+            reverseAliasCache = {}; // Resetear
+            for (const [alias, pubkey] of Object.entries(data)) {
+                reverseAliasCache[pubkey] = alias;
+            }
+            log(aliasCache, '📇 Alias Sincronizados');
+        } catch (e) {
+            log(e, '❌ ERROR /aliases');
+        }
+    };
+        
+    // --- MODIFICADO: renderTable (para mostrar alias) ---
     const renderTable = (title, dataObj, containerId, valueLabel='Valor') => {
       const container = document.getElementById(containerId);
       const entries = Object.entries(dataObj || {});
@@ -136,10 +151,12 @@
       const rows = entries
         .map(([k,v],i) => {
             const displayValue = Number(v); 
+            // NUEVO: Mostrar alias
+            const displayName = pubToAddress(k);
             return `
               <tr>
                 <td style="width:56px;">#${i+1}</td>
-                <td><code>${pubToAddress(k)}</code></td>
+                <td><code>${displayName}</code></td>
                 <td style="text-align:right">${displayValue}</td>
               </tr>
             `;
@@ -148,13 +165,14 @@
         <div class="muted" style="margin:6px 0 8px 0;">${title}</div>
         <table class="table">
           <thead>
-            <tr><th>#</th><th>Address (Public Key)</th><th style="text-align:right">${valueLabel}</th></tr>
+            <tr><th>#</th><th>Address (Alias / Public Key)</th><th style="text-align:right">${valueLabel}</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
       `;
     };
 
+    // --- MODIFICADO: renderMempool (para mostrar alias) ---
     const renderMempool = (transactions, containerId='mempoolResults') => {
       const container = document.getElementById(containerId);
       if (transactions.length === 0) {
@@ -163,16 +181,23 @@
       }
 
       const rows = transactions.map((tx, i) => {
-        const displayAmount = Number(tx.amount); // Monto entero
+        const displayAmount = Number(tx.amount);
+        // NUEVO: Mostrar alias
+        const senderName = pubToAddress(tx.sender);
+        const recipientName = pubToAddress(tx.recipient);
+        
+        // Asumimos que el backend añade timestamp
+        const time = tx.timestamp ? new Date(tx.timestamp * 1000).toLocaleTimeString() : 'N/A';
+
         return `
-                <tr>
-                    <td style="width: 30px;">#${i + 1}</td>
-                    <td style="width: 100px; text-align:right;">${displayAmount}</td>
-                    <td><code>${pubToAddress(tx.sender)}...</code></td>
-                    <td><code>${pubToAddress(tx.recipient)}...</code></td>
-                    <td>${new Date(tx.timestamp * 1000).toLocaleTimeString()}</td>
-                </tr>
-            `;
+            <tr>
+                <td style="width: 30px;">#${i + 1}</td>
+                <td style="width: 100px; text-align:right;">${displayAmount}</td>
+                <td><code>${senderName}</code></td>
+                <td><code>${recipientName}</code></td>
+                <td>${time}</td>
+            </tr>
+        `;
       }).join('');
 
       container.innerHTML = `
@@ -196,19 +221,41 @@
     let lastVerifiedTransaction = null; 
 
     window.addEventListener('load', () => {
-        // 1. Generación de Llaves
-        document.getElementById('btnRandomKeys').onclick = () => {
-            const { privateKeyHex, publicKeyHex } = generateKeyPair();
-            if (privateKeyHex && publicKeyHex) { 
-                document.getElementById('privateKey').value = privateKeyHex;
-                document.getElementById('publicKey').value = publicKeyHex;
-                document.getElementById('sender_pub_tx').value = publicKeyHex; 
-                document.getElementById('miner_address').value = publicKeyHex; 
-                log({ privateKeyHex, publicKeyHex }, '🗝️ Llaves Generadas');
-            } else {
-                log("ERROR: La generación de claves falló. Revisa la consola (F12).", '❌ Error de Criptografía');
+        
+        // --- MODIFICADO: 1. Generación y Registro de Llaves ---
+        document.getElementById('btnRandomKeys').onclick = async () => {
+            const alias = document.getElementById('alias').value;
+            if (!alias) {
+                log("ERROR: Debes escribir un Alias (nombre) para registrar.", '❌ Error de Registro');
+                return;
             }
-            document.getElementById('btnBalances').click();
+            
+            log("Generando llaves y registrando alias...");
+            const { privateKeyHex, publicKeyHex } = generateKeyPair();
+            if (!privateKeyHex || !publicKeyHex) { 
+                log("ERROR: La generación de claves falló.", '❌ Error de Criptografía');
+                return;
+            }
+            
+            document.getElementById('privateKey').value = privateKeyHex;
+            document.getElementById('publicKey').value = publicKeyHex;
+            document.getElementById('sender_pub_tx').value = publicKeyHex; 
+            document.getElementById('miner_address').value = publicKeyHex; 
+            log({ alias, privateKeyHex, publicKeyHex }, '🗝️ Llaves Generadas');
+            
+            try {
+                // Registrar el alias
+                const regData = await api('/register_alias', {
+                    method: 'POST',
+                    body: JSON.stringify({ alias: alias, public_key: publicKeyHex })
+                });
+                log(regData, '✅ Alias Registrado');
+                await updateAliasCaches(); // Actualizar la lista de alias
+                document.getElementById('btnBalances').click(); // Recargar balances para mostrar el nuevo alias
+            } catch (e) {
+                log(e.data, '❌ ERROR de Registro de Alias');
+            }
+            
             document.getElementById('signature_node').value = '';
             document.getElementById('publickey_node').value = '';
             document.getElementById('btnSendToMempool').disabled = true;
@@ -216,11 +263,11 @@
             lastVerifiedTransaction = null;
         };
 
-        // 2. Firma de Transacción (Remitente)
+        // --- MODIFICADO: 2. Firma de Transacción (con resolución de alias) ---
         document.getElementById('btnSignTx').onclick = () => {
             const privateKeyHex = document.getElementById('privateKey').value;
             const senderPub = document.getElementById('sender_pub_tx').value;
-            const recipient = document.getElementById('recipient_tx').value;
+            let recipient = document.getElementById('recipient_tx').value; // 'let' en lugar de 'const'
             
             const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
             const amount_int = Math.round(amount_input); 
@@ -229,8 +276,22 @@
                 log("ERROR: Debes generar y seleccionar las Llaves primero.", '❌ Error de Firma');
                 return;
             }
+            
+            // --- NUEVO: Resolver Alias ---
+            if (recipient && !recipient.startsWith('04')) {
+                const resolvedKey = aliasCache[recipient];
+                if (resolvedKey) {
+                    log(`Alias "${recipient}" resuelto a ${resolvedKey.substring(0, 20)}...`);
+                    recipient = resolvedKey;
+                } else {
+                    log(`ERROR: Alias "${recipient}" no encontrado.`, '❌ Error de Firma');
+                    return;
+                }
+            }
+            // --- Fin de Resolución ---
+            
             if (!recipient || amount_int <= 0) {
-                log("ERROR: Monto de transacción debe ser positivo (entero).", '❌ Error de Firma');
+                log("ERROR: Monto debe ser positivo y Destinatario (o alias) válido.", '❌ Error de Firma');
                 return;
             }
 
@@ -251,20 +312,34 @@
             lastVerifiedTransaction = null;
         };
         
-        // --- 3. Nodo Central: Verificación de Firma y Fondos ---
+        // --- 3. Nodo Central: Verificación (con resolución de alias) ---
         const validationCard = document.getElementById('validationCard');
         const btnSendToMempool = document.getElementById('btnSendToMempool');
         btnSendToMempool.disabled = true; 
 
         document.getElementById('btnVerifyTxNode').onclick = async () => {
             const sender_pub = document.getElementById('sender_pub_tx').value;
-            const recipient = document.getElementById('recipient_tx').value;
+            let recipient = document.getElementById('recipient_tx').value; // 'let' en lugar de 'const'
             
             const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
             const amount_int = Math.round(amount_input);
 
             const signature = document.getElementById('signature_node').value;
             const publickey_for_verification = document.getElementById('publickey_node').value;
+
+            // --- NUEVO: Resolver Alias ---
+            if (recipient && !recipient.startsWith('04')) {
+                const resolvedKey = aliasCache[recipient];
+                if (resolvedKey) {
+                    log(`Alias "${recipient}" resuelto a ${resolvedKey.substring(0, 20)}...`);
+                    recipient = resolvedKey;
+                } else {
+                    log(`ERROR: Alias "${recipient}" no encontrado.`, '❌ Error de Verificación');
+                    validationCard.classList.add('invalid');
+                    return;
+                }
+            }
+            // --- Fin de Resolución ---
 
             if (!sender_pub || !signature || !recipient || amount_int <= 0 || !publickey_for_verification) {
                 log("ERROR: Rellenar todos los campos de Tx, Public Key y Firma.", '❌ Error de Verificación');
@@ -274,18 +349,12 @@
                 return;
             }
 
-            const payloadForVerification = {
-                amount: amount_int,
-                recipient: recipient,
-                sender: publickey_for_verification,
-            };
-
             try {
                 const verificationResult = await api('/transactions/verify_only', {
                     method: 'POST',
                     body: JSON.stringify({ 
                         sender_pub: publickey_for_verification, 
-                        recipient: recipient, 
+                        recipient: recipient, // Usar 'recipient' resuelto
                         amount: amount_int,
                         signature: signature,
                     })
@@ -338,7 +407,7 @@
             }
         };
 
-        // --- 4. Minería ---
+        // --- 4. Minería (modificado para rellenar panel) ---
         document.getElementById('btnMine').onclick = async () => {
             const miner_address = document.getElementById('miner_address').value;
             if (!miner_address) {
@@ -351,27 +420,23 @@
                 const t1 = performance.now(); 
                 log({ tiempo_ms: Math.round(t1-t0), ...d }, '⛏️ Bloque Minado'); 
 
-                // --- 🚀 CÓDIGO MODIFICADO ---
-                // Rellenar el panel del Bloque Candidato
                 document.getElementById('blockIndex').textContent = d.index;
                 document.getElementById('blockNonce').textContent = d.nonce;
                 document.getElementById('blockPrevHash').textContent = d.previous_hash;
                 document.getElementById('blockHash').textContent = d.hash;
 
-                // Rellenar la lista de transacciones del bloque
                 const txListEl = document.getElementById('blockTxsList');
                 if (d.transactions && d.transactions.length > 0) {
                     txListEl.innerHTML = d.transactions.map((tx, i) => 
                         `<p class="muted" style="font-size:11px; margin: 4px 0;">
                             <b>Tx #${i}:</b> ${tx.amount} 
-                            (De: ${tx.sender === 'SYSTEM' ? 'SYSTEM' : pubToAddress(tx.sender)+'...'} 
-                            -> A: ${pubToAddress(tx.recipient)+'...'})
+                            (De: ${pubToAddress(tx.sender)} 
+                            -> A: ${pubToAddress(tx.recipient)})
                         </p>`
                     ).join('');
                 } else {
                     txListEl.innerHTML = '<p class="muted">No hay transacciones en este bloque.</p>';
                 }
-                // --- FIN DE CÓDIGO MODIFICADO ---
 
                 document.getElementById('btnChain').click();
                 document.getElementById('btnLeaders').click();
@@ -383,15 +448,17 @@
             }
         };
 
-        // --- Consultas ---
+        // --- 5. Consultas (Modificadas para cargar alias) ---
         document.getElementById('btnHealth').onclick = async () => {
           try { const d = await api('/health'); setBadge(true, `(diff=${d.difficulty})`); log(d, '/health'); }
           catch (e) { setBadge(false); log(e, '❌ ERROR /health'); }
         };
         document.getElementById('btnChain').onclick = async () => { try { log(await api('/chain'), '🔗 /chain'); } catch(e){ log(e,'❌ ERROR /chain'); } };
         document.getElementById('btnValidate').onclick = async () => { try { log(await api('/validate'), '🛡️ /validate'); } catch(e){ log(e,'❌ ERROR /validate'); } };
+        
         document.getElementById('btnLeaders').onclick = async () => {
           try { 
+            await updateAliasCaches(); // Asegurar que los alias están cargados
             const d = await api('/leaders');
             log(d, '👑 /leaders (Ranking)');                 
             renderTable('Recompensas acumuladas por minero', d, 'leadersTable', 'Recompensa');
@@ -399,39 +466,64 @@
         };
         document.getElementById('btnBalances').onclick = async () => {
           try { 
+            await updateAliasCaches(); // Asegurar que los alias están cargados
             const d = await api('/balances');
             log(d, '💰 /balances (Saldos)');
             renderTable('Saldo neto por address (Public Key)', d, 'balancesTable', 'Saldo');
           } catch (e) { log(e, '❌ ERROR /balances'); }
         };
+        document.getElementById('btnShowMempool').onclick = async () => { 
+            try { 
+                await updateAliasCaches(); // Asegurar que los alias están cargados
+                const d = await api('/mempool'); 
+                renderMempool(d, 'mempoolResults'); 
+                log(d, '📝 /mempool (Transacciones Pendientes)'); 
+            } catch(e) { log(e,'❌ ERROR /mempool'); } 
+        };
 
-        document.getElementById('btnShowMempool').onclick = async () => { try { const d = await api('/mempool'); renderMempool(d, 'mempoolResults'); log(d, '📝 /mempool (Transacciones Pendientes)'); } catch(e){ log(e,'❌ ERROR /mempool'); } };
+        // --- 6. Lógica del Faucet (movida a un nuevo botón) ---
+        document.getElementById('btn_faucet_send').onclick = async () => {
+            const recipient = document.getElementById('faucet_recipient').value;
+            let recipient_address = recipient;
 
-        // --- Lógica del Faucet ---
-        document.getElementById('btnFaucet').onclick = async () => {
-            const myPublicKey = document.getElementById('publicKey').value;
-            if (!myPublicKey) {
-                log("ERROR: Primero debes generar un par de llaves.", '❌ Error de Faucet');
+            if (!recipient_address) {
+                log("ERROR: Debes poner un Alias o Llave Pública del destinatario.", '❌ Error de Faucet');
                 return;
             }
+
+            // Resolver alias si es necesario
+            if (!recipient_address.startsWith('04')) {
+                const resolvedKey = aliasCache[recipient_address];
+                if (resolvedKey) {
+                    log(`Alias "${recipient_address}" resuelto a ${resolvedKey.substring(0, 20)}...`);
+                    recipient_address = resolvedKey;
+                } else {
+                    log(`ERROR: Alias "${recipient_address}" no encontrado.`, '❌ Error de Faucet');
+                    return;
+                }
+            }
             
-            log("Pidiendo 100 monedas al Faucet...");
+            log(`Enviando 100 monedas del Faucet a ${pubToAddress(recipient_address)}...`);
             try {
                 const d = await api('/faucet', { 
                     method:'POST', 
-                    body: JSON.stringify({ recipient_address: myPublicKey }) 
+                    body: JSON.stringify({ recipient_address: recipient_address }) 
                 });
                 log(d, '💧 Faucet');
                 document.getElementById('btnShowMempool').click();
                 document.getElementById('btnBalances').click();
             } catch (e) {
-                log(e, '❌ ERROR /faucet');
+                log(e.data, '❌ ERROR /faucet');
             }
         };
 
         // --- Autocarga inicial ---
-        document.getElementById('btnHealth').click();
-        document.getElementById('btnBalances').click();
+        const init = async () => {
+            await updateAliasCaches(); // Cargar alias primero
+            document.getElementById('btnHealth').click();
+            document.getElementById('btnBalances').click();
+        };
+        init();
     });
   </script>
 </head>
@@ -444,28 +536,32 @@
   <main>
     <section class="card">
       <h2>1. 🗝️ Generación de Identidad (Usuario)</h2>
+      
+      <label>Alias (Tu nombre de usuario)</label>
+      <input id="alias" placeholder="Ej: victor, satoshi, ..." />
+      <div style="height:10px"></div>
+      
       <label>Llave Privada (Private Key - ¡Secreta!)</label>
-      <input id="privateKey" placeholder="Generar clave aleatoria..." />
+      <input id="privateKey" placeholder="Se generará al registrar el alias..." readonly/>
       <div style="height:10px"></div>
       <label>Llave Pública (Public Key - Dirección)</label>
-      <textarea id="publicKey" rows="3" placeholder="Esta es la dirección FROM/TO"></textarea>
+      <textarea id="publicKey" rows="3" placeholder="Se generará al registrar el alias..." readonly></textarea>
       <div style="height:10px"></div>
-      <button class="btn primary" id="btnRandomKeys">RANDOM (Generar Par)</button>
       
-      <button class="btn" id="btnFaucet" style="margin-top: 10px; background-color: #3b0764; border-color: #a855f7;">
-        🎁 RECIBIR 100 (Faucet)
-      </button>
-
-    </section>
+      <button class="btn primary" id="btnRandomKeys">GENERAR Y REGISTRAR ALIAS</button>
+      
+      </section>
 
     <section class="card">
       <h2>2. ✍️ Creación y Firma de Transacción (Remitente)</h2>
       <label>Remitente (sender_pub - Copia la Public Key de arriba)</label>
       <textarea id="sender_pub_tx" rows="2" placeholder="Llave Pública COMPLETA del remitente (FROM)"></textarea>
       <div style="height:10px"></div>
+      
       <label>Destinatario (recipient)</label>
-      <input id="recipient_tx" placeholder="Llave Pública de otro usuario (TO)" value="04634f590b074a123f81e3630f146a066c06173a144e54e4c9c221191060934e6284f1b4a558509c2a8c3d706f9d34346747530e7d0263f10646c8a513511111" />
+      <input id="recipient_tx" placeholder="Alias o Llave Pública de otro usuario (TO)" value="04634f590b074a123f81e3630f146a066c06173a144e54e4c9c221191060934e6284f1b4a558509c2a8c3d706f9d34346747530e7d0263f10646c8a513511111" />
       <div style="height:10px"></div>
+      
       <label>Monto (amount)</label>
       <input id="amount_tx" type="number" step="1" placeholder="10" value="10" /> 
       
@@ -513,8 +609,8 @@
 
         <div class="card" style="margin: 0; padding: 0;">
             <h2>5. ⛏️ Proceso de Minado (Nodo)</h2>
-            <label>Dirección del minero (Public Key)</label>
-            <textarea id="miner_address" rows="2" placeholder="Pega aquí la Public Key para recibir la recompensa..."></textarea>
+            <label>Dirección del minero (Alias o Public Key)</label>
+            <textarea id="miner_address" rows="2" placeholder="Pega aquí tu Alias o Public Key para recibir la recompensa..."></textarea>
             <div style="height:10px"></div>
             <button class="btn primary" id="btnMine">MINAR Bloque (PoW)</button>
             <div style="height:20px"></div>
@@ -550,6 +646,22 @@
     <section class="card col-span-3">
       <h2>7. Panel de Resultados / Log</h2>
       <div class="log" id="log"><pre><code>Listo para operar... Por favor, borra o renombra 'chain.json' y reinicia el servidor.</code></pre></div>
+    </section>
+
+    <section class="card col-span-3">
+        <h2>🎁 Faucet del Fundador (Admin)</h2>
+        <div class="muted">
+          Aquí el Fundador puede "empujar" fondos a cualquier usuario.
+          El servidor usará la Llave Privada del Fundador para firmar.
+        </div>
+        <div style="height:16px"></div>
+  
+        <label>Destinatario (Alias o Llave Pública)</label>
+        <input id="faucet_recipient" placeholder="Ej: victor (o la llave 04...)" />
+        <div style="height:10px"></div>
+        <button class="btn" id="btn_faucet_send" style="background-color: #3b0764; border-color: #a855f7;">
+            ENVIAR 100 (desde Fundador)
+        </button>
     </section>
 
     <section class="card col-span-3">
