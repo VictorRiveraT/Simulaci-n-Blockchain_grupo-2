@@ -1,0 +1,4 @@
+Flask
+ecdsa
+flask-cors
+gunicorn
