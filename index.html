@@ -56,11 +56,9 @@
     const EC = elliptic.ec;
     const ec = new EC('secp256k1');
 
-    // --- NUEVO: CACHE DE ALIAS ---
-    let aliasCache = {}; // {'alias': 'pubkey'}
-    let reverseAliasCache = {}; // {'pubkey': 'alias'}
+    let aliasCache = {}; 
+    let reverseAliasCache = {}; 
     
-    // --- Utilidades Criptográficas ---
     const stableStringify = (v) => {
       if (v === null || typeof v !== 'object') return JSON.stringify(v);
       if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
@@ -96,16 +94,13 @@
     
     const pubToAddress = (publicKeyHex) => {
         if (!publicKeyHex || publicKeyHex.length < 40) return publicKeyHex;
-        // NUEVO: Chequear si es una llave del sistema
         if (publicKeyHex === 'SYSTEM' || publicKeyHex === '0000_GENESIS_0000') return publicKeyHex;
         
-        // NUEVO: Mostrar alias si existe
         const alias = reverseAliasCache[publicKeyHex];
         const shortKey = publicKeyHex.substring(0, 40) + '...';
         return alias ? `${alias} (${shortKey})` : shortKey;
     };
 
-    // --- Utilidades UI ---
     const log = (obj, title) => {
       const el = document.getElementById('log');
       const prev = el.innerHTML;
@@ -125,12 +120,11 @@
           return data;
         });
         
-    // --- NUEVA FUNCIÓN: Actualizar Caches de Alias ---
     const updateAliasCaches = async () => {
         try {
             const data = await api('/aliases');
             aliasCache = data;
-            reverseAliasCache = {}; // Resetear
+            reverseAliasCache = {}; 
             for (const [alias, pubkey] of Object.entries(data)) {
                 reverseAliasCache[pubkey] = alias;
             }
@@ -140,7 +134,6 @@
         }
     };
         
-    // --- MODIFICADO: renderTable (para mostrar alias) ---
     const renderTable = (title, dataObj, containerId, valueLabel='Valor') => {
       const container = document.getElementById(containerId);
       const entries = Object.entries(dataObj || {});
@@ -151,7 +144,6 @@
       const rows = entries
         .map(([k,v],i) => {
             const displayValue = Number(v); 
-            // NUEVO: Mostrar alias
             const displayName = pubToAddress(k);
             return `
               <tr>
@@ -172,7 +164,6 @@
       `;
     };
 
-    // --- MODIFICADO: renderMempool (para mostrar alias) ---
     const renderMempool = (transactions, containerId='mempoolResults') => {
       const container = document.getElementById(containerId);
       if (transactions.length === 0) {
@@ -182,11 +173,8 @@
 
       const rows = transactions.map((tx, i) => {
         const displayAmount = Number(tx.amount);
-        // NUEVO: Mostrar alias
         const senderName = pubToAddress(tx.sender);
         const recipientName = pubToAddress(tx.recipient);
-        
-        // Asumimos que el backend añade timestamp
         const time = tx.timestamp ? new Date(tx.timestamp * 1000).toLocaleTimeString() : 'N/A';
 
         return `
@@ -216,13 +204,10 @@
         `;
     };
     
-    // --- Lógica del Simulador ---
-    
     let lastVerifiedTransaction = null; 
 
     window.addEventListener('load', () => {
         
-        // --- MODIFICADO: 1. Generación y Registro de Llaves ---
         document.getElementById('btnRandomKeys').onclick = async () => {
             const alias = document.getElementById('alias').value;
             if (!alias) {
@@ -244,14 +229,13 @@
             log({ alias, privateKeyHex, publicKeyHex }, '🗝️ Llaves Generadas');
             
             try {
-                // Registrar el alias
                 const regData = await api('/register_alias', {
                     method: 'POST',
                     body: JSON.stringify({ alias: alias, public_key: publicKeyHex })
                 });
                 log(regData, '✅ Alias Registrado');
-                await updateAliasCaches(); // Actualizar la lista de alias
-                document.getElementById('btnBalances').click(); // Recargar balances para mostrar el nuevo alias
+                await updateAliasCaches();
+                document.getElementById('btnBalances').click();
             } catch (e) {
                 log(e.data, '❌ ERROR de Registro de Alias');
             }
@@ -263,11 +247,10 @@
             lastVerifiedTransaction = null;
         };
 
-        // --- MODIFICADO: 2. Firma de Transacción (con resolución de alias) ---
         document.getElementById('btnSignTx').onclick = () => {
             const privateKeyHex = document.getElementById('privateKey').value;
             const senderPub = document.getElementById('sender_pub_tx').value;
-            let recipient = document.getElementById('recipient_tx').value; // 'let' en lugar de 'const'
+            let recipient = document.getElementById('recipient_tx').value;
             
             const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
             const amount_int = Math.round(amount_input); 
@@ -277,7 +260,6 @@
                 return;
             }
             
-            // --- NUEVO: Resolver Alias ---
             if (recipient && !recipient.startsWith('04')) {
                 const resolvedKey = aliasCache[recipient];
                 if (resolvedKey) {
@@ -288,7 +270,6 @@
                     return;
                 }
             }
-            // --- Fin de Resolución ---
             
             if (!recipient || amount_int <= 0) {
                 log("ERROR: Monto debe ser positivo y Destinatario (o alias) válido.", '❌ Error de Firma');
@@ -312,14 +293,13 @@
             lastVerifiedTransaction = null;
         };
         
-        // --- 3. Nodo Central: Verificación (con resolución de alias) ---
         const validationCard = document.getElementById('validationCard');
         const btnSendToMempool = document.getElementById('btnSendToMempool');
         btnSendToMempool.disabled = true; 
 
         document.getElementById('btnVerifyTxNode').onclick = async () => {
             const sender_pub = document.getElementById('sender_pub_tx').value;
-            let recipient = document.getElementById('recipient_tx').value; // 'let' en lugar de 'const'
+            let recipient = document.getElementById('recipient_tx').value;
             
             const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
             const amount_int = Math.round(amount_input);
@@ -327,7 +307,6 @@
             const signature = document.getElementById('signature_node').value;
             const publickey_for_verification = document.getElementById('publickey_node').value;
 
-            // --- NUEVO: Resolver Alias ---
             if (recipient && !recipient.startsWith('04')) {
                 const resolvedKey = aliasCache[recipient];
                 if (resolvedKey) {
@@ -339,7 +318,6 @@
                     return;
                 }
             }
-            // --- Fin de Resolución ---
 
             if (!sender_pub || !signature || !recipient || amount_int <= 0 || !publickey_for_verification) {
                 log("ERROR: Rellenar todos los campos de Tx, Public Key y Firma.", '❌ Error de Verificación');
@@ -354,7 +332,7 @@
                     method: 'POST',
                     body: JSON.stringify({ 
                         sender_pub: publickey_for_verification, 
-                        recipient: recipient, // Usar 'recipient' resuelto
+                        recipient: recipient,
                         amount: amount_int,
                         signature: signature,
                     })
@@ -407,7 +385,6 @@
             }
         };
 
-        // --- 4. Minería (modificado para rellenar panel) ---
         document.getElementById('btnMine').onclick = async () => {
             const miner_address = document.getElementById('miner_address').value;
             if (!miner_address) {
@@ -448,7 +425,6 @@
             }
         };
 
-        // --- 5. Consultas (Modificadas para cargar alias) ---
         document.getElementById('btnHealth').onclick = async () => {
           try { const d = await api('/health'); setBadge(true, `(diff=${d.difficulty})`); log(d, '/health'); }
           catch (e) { setBadge(false); log(e, '❌ ERROR /health'); }
@@ -458,7 +434,7 @@
         
         document.getElementById('btnLeaders').onclick = async () => {
           try { 
-            await updateAliasCaches(); // Asegurar que los alias están cargados
+            await updateAliasCaches();
             const d = await api('/leaders');
             log(d, '👑 /leaders (Ranking)');                 
             renderTable('Recompensas acumuladas por minero', d, 'leadersTable', 'Recompensa');
@@ -466,7 +442,7 @@
         };
         document.getElementById('btnBalances').onclick = async () => {
           try { 
-            await updateAliasCaches(); // Asegurar que los alias están cargados
+            await updateAliasCaches();
             const d = await api('/balances');
             log(d, '💰 /balances (Saldos)');
             renderTable('Saldo neto por address (Public Key)', d, 'balancesTable', 'Saldo');
@@ -474,20 +450,21 @@
         };
         document.getElementById('btnShowMempool').onclick = async () => { 
             try { 
-                await updateAliasCaches(); // Asegurar que los alias están cargados
+                await updateAliasCaches();
                 const d = await api('/mempool'); 
                 renderMempool(d, 'mempoolResults'); 
                 log(d, '📝 /mempool (Transacciones Pendientes)'); 
             } catch(e) { log(e,'❌ ERROR /mempool'); } 
         };
 
-        // --- 6. Lógica del Faucet (movida a un nuevo botón) ---
+        // --- LÓGICA DEL FAUCET MODIFICADA ---
         document.getElementById('btn_faucet_send').onclick = async () => {
             const recipient = document.getElementById('faucet_recipient').value;
+            const private_key = document.getElementById('faucet_private_key').value; // <-- NUEVO
             let recipient_address = recipient;
 
-            if (!recipient_address) {
-                log("ERROR: Debes poner un Alias o Llave Pública del destinatario.", '❌ Error de Faucet');
+            if (!recipient_address || !private_key) { // <-- MODIFICADO
+                log("ERROR: Debes poner un Destinatario Y la Llave Privada del Fundador.", '❌ Error de Faucet');
                 return;
             }
 
@@ -507,19 +484,21 @@
             try {
                 const d = await api('/faucet', { 
                     method:'POST', 
-                    body: JSON.stringify({ recipient_address: recipient_address }) 
+                    body: JSON.stringify({ 
+                        recipient_address: recipient_address,
+                        admin_private_key: private_key // <-- NUEVO
+                    }) 
                 });
                 log(d, '💧 Faucet');
                 document.getElementById('btnShowMempool').click();
                 document.getElementById('btnBalances').click();
             } catch (e) {
-                log(e.data, '❌ ERROR /faucet');
+                log(e.data, '❌ ERROR /faucet'); // El error 401 se mostrará aquí
             }
         };
 
-        // --- Autocarga inicial ---
         const init = async () => {
-            await updateAliasCaches(); // Cargar alias primero
+            await updateAliasCaches();
             document.getElementById('btnHealth').click();
             document.getElementById('btnBalances').click();
         };
@@ -550,7 +529,7 @@
       
       <button class="btn primary" id="btnRandomKeys">GENERAR Y REGISTRAR ALIAS</button>
       
-      </section>
+    </section>
 
     <section class="card">
       <h2>2. ✍️ Creación y Firma de Transacción (Remitente)</h2>
@@ -652,13 +631,18 @@
         <h2>🎁 Faucet del Fundador (Admin)</h2>
         <div class="muted">
           Aquí el Fundador puede "empujar" fondos a cualquier usuario.
-          El servidor usará la Llave Privada del Fundador para firmar.
+          (Necesitas la Llave Privada del Fundador que se muestra en la consola del servidor).
         </div>
         <div style="height:16px"></div>
   
         <label>Destinatario (Alias o Llave Pública)</label>
         <input id="faucet_recipient" placeholder="Ej: victor (o la llave 04...)" />
         <div style="height:10px"></div>
+
+        <label>Llave Privada del Fundador (Admin)</label>
+        <textarea id="faucet_private_key" rows="2" placeholder="Copiar de la consola del servidor..."></textarea>
+        <div style="height:10px"></div>
+        
         <button class="btn" id="btn_faucet_send" style="background-color: #3b0764; border-color: #a855f7;">
             ENVIAR 100 (desde Fundador)
         </button>
