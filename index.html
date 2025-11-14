@@ -222,7 +222,6 @@
             const senderPub = document.getElementById('sender_pub_tx').value;
             const recipient = document.getElementById('recipient_tx').value;
             
-            // 🛑 FIX: Usamos el valor de entrada directamente (debe ser INT)
             const amount_input = parseFloat(document.getElementById('amount_tx').value || '0');
             const amount_int = Math.round(amount_input); 
 
@@ -235,7 +234,6 @@
                 return;
             }
 
-            // 🛑 Payload final, con montos enteros directos y orden alfabético (A, R, S)
             const payload = {
                 amount: amount_int, 
                 recipient: recipient, 
@@ -246,7 +244,6 @@
             document.getElementById('signature_tx').value = signature;
             log({ payload, signature, hash: hashPayload(payload) }, '✍️ Transacción Firmada');
 
-            // Autocompletar el bloque de verificación del Nodo Central
             document.getElementById('signature_node').value = signature;
             document.getElementById('publickey_node').value = senderPub;
             document.getElementById('btnSendToMempool').disabled = true; 
@@ -260,7 +257,6 @@
         btnSendToMempool.disabled = true; 
 
         document.getElementById('btnVerifyTxNode').onclick = async () => {
-            // --- CÓDIGO CORREGIDO: TOMA EL PAYLOAD DE LA SECCIÓN 2 ---
             const sender_pub = document.getElementById('sender_pub_tx').value;
             const recipient = document.getElementById('recipient_tx').value;
             
@@ -269,7 +265,6 @@
 
             const signature = document.getElementById('signature_node').value;
             const publickey_for_verification = document.getElementById('publickey_node').value;
-            // -----------------------------------------------------------
 
             if (!sender_pub || !signature || !recipient || amount_int <= 0 || !publickey_for_verification) {
                 log("ERROR: Rellenar todos los campos de Tx, Public Key y Firma.", '❌ Error de Verificación');
@@ -279,21 +274,19 @@
                 return;
             }
 
-            // 1. Crear el payload EXACTO que se firmó (sin fee)
             const payloadForVerification = {
                 amount: amount_int,
                 recipient: recipient,
                 sender: publickey_for_verification,
             };
 
-            // 🛑 Delegamos a Flask
             try {
                 const verificationResult = await api('/transactions/verify_only', {
                     method: 'POST',
                     body: JSON.stringify({ 
                         sender_pub: publickey_for_verification, 
                         recipient: recipient, 
-                        amount: amount_int, // <- ENVIAR ENTERO
+                        amount: amount_int,
                         signature: signature,
                     })
                 });
@@ -303,7 +296,6 @@
                     validationCard.classList.remove('invalid');
                     validationCard.classList.add('valid');
                     btnSendToMempool.disabled = false;
-                    // Guardamos la transacción con los enteros
                     lastVerifiedTransaction = { sender_pub: publickey_for_verification, recipient, amount: amount_int, signature: signature };
 
                 } else {
@@ -336,7 +328,6 @@
                 document.getElementById('btnShowMempool').click();
                 document.getElementById('btnBalances').click();
                 
-                // Resetear estado después del envío
                 btnSendToMempool.disabled = true;
                 validationCard.classList.remove('valid', 'invalid');
                 lastVerifiedTransaction = null;
@@ -393,7 +384,30 @@
 
         document.getElementById('btnShowMempool').onclick = async () => { try { const d = await api('/mempool'); renderMempool(d, 'mempoolResults'); log(d, '📝 /mempool (Transacciones Pendientes)'); } catch(e){ log(e,'❌ ERROR /mempool'); } };
 
-        // Autocarga inicial
+        // --- LÓGICA DEL FAUCET AÑADIDA ---
+        document.getElementById('btnFaucet').onclick = async () => {
+            const myPublicKey = document.getElementById('publicKey').value;
+            if (!myPublicKey) {
+                log("ERROR: Primero debes generar un par de llaves.", '❌ Error de Faucet');
+                return;
+            }
+            
+            log("Pidiendo 100 monedas al Faucet...");
+            try {
+                const d = await api('/faucet', { 
+                    method:'POST', 
+                    body: JSON.stringify({ recipient_address: myPublicKey }) 
+                });
+                log(d, '💧 Faucet');
+                // Actualizar vistas para ver la transacción en el mempool
+                document.getElementById('btnShowMempool').click();
+                document.getElementById('btnBalances').click();
+            } catch (e) {
+                log(e, '❌ ERROR /faucet');
+            }
+        };
+
+        // --- Autocarga inicial ---
         document.getElementById('btnHealth').click();
         document.getElementById('btnBalances').click();
     });
@@ -415,7 +429,11 @@
       <textarea id="publicKey" rows="3" placeholder="Esta es la dirección FROM/TO"></textarea>
       <div style="height:10px"></div>
       <button class="btn primary" id="btnRandomKeys">RANDOM (Generar Par)</button>
-    </section>
+      
+      <button class="btn" id="btnFaucet" style="margin-top: 10px; background-color: #3b0764; border-color: #a855f7;">
+        🎁 RECIBIR 100 (Faucet)
+      </button>
+      </section>
 
     <section class="card">
       <h2>2. ✍️ Creación y Firma de Transacción (Remitente)</h2>
