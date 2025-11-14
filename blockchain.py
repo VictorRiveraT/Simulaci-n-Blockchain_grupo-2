@@ -5,12 +5,21 @@ from uuid import uuid4
 from urllib.parse import urlparse
 from collections import OrderedDict
 
-# keys.py no necesita cambios
 from keys import Keys
 
-# CAMBIO: Usar montos enteros
-FOUNDER_ADDRESS = "0000_GENESIS_0000"
-MINING_REWARD = 10 # 10 en lugar de 10.0
+# --- CONSTANTES MODIFICADAS ---
+# 1. Generar un par de llaves permanente para el Fundador/Génesis
+_FOUNDER_KEYS = Keys.generate_key_pair()
+FOUNDER_PRIVATE_KEY = _FOUNDER_KEYS[0]
+FOUNDER_ADDRESS = _FOUNDER_KEYS[1] # Esta es ahora la dirección pública
+MINING_REWARD = 10
+
+print("*"*50)
+print(f"🔑 Dirección del Fundador (Génesis): {FOUNDER_ADDRESS}")
+print(f"💰 El Fundador tiene 5000 monedas para usar como Faucet.")
+print("*"*50)
+# --- FIN DE MODIFICACIÓN ---
+
 
 class Blockchain:
     """
@@ -39,18 +48,14 @@ class Blockchain:
         else:
             raise ValueError('URL inválida')
 
-    # NUEVA FUNCIÓN: Para crear el hash del payload como en el JS
     @staticmethod
     def _stable_hash_payload(payload: dict) -> str:
         """
         Crea un hash SHA-256 de un diccionario de payload, ordenando
         las claves para consistencia.
         """
-        # Ordenar el diccionario por clave
         sorted_payload = OrderedDict(sorted(payload.items()))
-        # Convertir a string JSON
         payload_string = json.dumps(sorted_payload, separators=(',', ':')).encode()
-        # Retornar el hash
         return hashlib.sha256(payload_string).hexdigest()
 
     def _new_block(self, previous_hash: str, nonce: int, genesis: bool = False):
@@ -58,14 +63,14 @@ class Blockchain:
 
         if genesis:
             transactions_in_block.append({
-                'sender': "SYSTEM", # Cambiado de sender_public_key a sender
-                'recipient': FOUNDER_ADDRESS,
-                'amount': 5000, # CAMBIO: Monto entero
+                'sender': "SYSTEM",
+                'recipient': FOUNDER_ADDRESS, # Ahora usa la llave pública generada
+                'amount': 5000, 
                 'signature': "SYSTEM_SIGNATURE"
             })
         else:
             transactions_in_block.append({
-                'sender': "SYSTEM", # Cambiado de sender_public_key a sender
+                'sender': "SYSTEM",
                 'recipient': self.node_id,
                 'amount': MINING_REWARD,
                 'signature': "SYSTEM_SIGNATURE"
@@ -85,19 +90,15 @@ class Blockchain:
         self._chain.append(block)
         return block
 
-    # FUNCIÓN MODIFICADA: Ahora usa 'verify_transaction'
     def new_transaction(self, sender_pub: str, recipient: str, amount: int, signature: str) -> tuple[bool, str]:
         """
         Verifica y luego agrega una nueva transacción al 'mempool'.
         """
-        
-        # 1. Verificar la transacción (fondos y firma)
         is_valid, message = self.verify_transaction(sender_pub, recipient, amount, signature)
         
         if not is_valid:
             return False, message
         
-        # 2. Si es válida, añadir al mempool
         self._current_transactions.append({
             'sender': sender_pub,
             'recipient': recipient,
@@ -107,25 +108,19 @@ class Blockchain:
 
         return True, "Transacción verificada y añadida al Mempool."
     
-    # NUEVA FUNCIÓN: Para el endpoint /transactions/verify_only
     def verify_transaction(self, sender_pub: str, recipient: str, amount: int, signature: str) -> tuple[bool, str]:
         """
         Verifica una transacción (fondos y firma) SIN agregarla al mempool.
         """
-        
-        # 1. VERIFICACIÓN DE FONDOS
         current_balance = self.get_balance(sender_pub)
         if current_balance < amount:
             return False, f"Verificación de fondos fallida. El remitente solo tiene {current_balance}."
 
-        # 2. VERIFICACIÓN DE FIRMA
-        # Recrear el payload exacto que el JS firmó
         payload = {
             'amount': amount,
             'recipient': recipient,
             'sender': sender_pub
         }
-        # Crear el hash
         message_hash_hex = self._stable_hash_payload(payload)
         
         if not Keys.verify_signature(sender_pub, signature, message_hash_hex):
@@ -133,7 +128,6 @@ class Blockchain:
 
         return True, "Transacción verificada (firma y fondos OK)."
 
-    # FUNCIÓN MODIFICADA: Usa 'sender' y montos enteros
     def get_balance(self, public_key_address: str) -> int:
         """
         Calcula el saldo (entero) de una dirección.
@@ -145,7 +139,6 @@ class Blockchain:
                 if tx['recipient'] == public_key_address:
                     balance += int(tx['amount'])
                 
-                # CAMBIO: usa 'sender'
                 if tx['sender'] == public_key_address:
                     balance -= int(tx['amount'])
         
@@ -155,7 +148,6 @@ class Blockchain:
                 
         return balance
 
-    # NUEVA FUNCIÓN: Para el endpoint /balances
     def get_all_balances(self) -> dict:
         """
         Retorna un diccionario con los saldos de todas las direcciones.
@@ -173,7 +165,6 @@ class Blockchain:
         
         return balances
 
-    # NUEVA FUNCIÓN: Para el endpoint /leaders
     def get_leaders(self) -> dict:
         """
         Calcula y retorna las recompensas totales por minero.
@@ -187,7 +178,6 @@ class Blockchain:
                     leaders[miner] = leaders.get(miner, 0) + amount
         return leaders
 
-    # NUEVA FUNCIÓN: Para el endpoint /validate
     def is_chain_valid(self) -> bool:
         """
         Verifica si la cadena de bloques es válida (hashes y PoW).
@@ -198,11 +188,9 @@ class Blockchain:
         while current_index < len(self._chain):
             block = self._chain[current_index]
             
-            # 1. Verificar el hash anterior
             if block['previous_hash'] != self._hash(last_block):
                 return False
                 
-            # 2. Verificar la Prueba de Trabajo
             if not self._valid_proof(self._hash(last_block), block['nonce']):
                 return False
                 
@@ -210,6 +198,42 @@ class Blockchain:
             current_index += 1
             
         return True
+
+    # --- NUEVA FUNCIÓN AÑADIDA ---
+    def issue_faucet_funds(self, recipient_address: str, amount: int = 100) -> tuple[bool, str]:
+        """
+        El Fundador (dueño del nodo) firma y envía fondos
+        a una dirección como un 'Faucet'.
+        """
+        
+        # 1. Verificar que el fundador tenga fondos
+        founder_balance = self.get_balance(FOUNDER_ADDRESS)
+        if founder_balance < amount:
+            return False, "El Faucet está vacío. El Fundador no tiene fondos."
+
+        # 2. Crear el payload de la transacción
+        payload = {
+            'amount': amount,
+            'recipient': recipient_address,
+            'sender': FOUNDER_ADDRESS
+        }
+        
+        # 3. Hashear el payload
+        message_hash_hex = self._stable_hash_payload(payload)
+        
+        # 4. Firmar el hash con la LLAVE PRIVADA del Fundador
+        signature = Keys.sign_digest(FOUNDER_PRIVATE_KEY, message_hash_hex)
+        
+        if not signature:
+            return False, "Error interno al firmar la transacción del Faucet."
+
+        # 5. Enviar la transacción a la red (al mempool)
+        return self.new_transaction(
+            sender_pub=FOUNDER_ADDRESS,
+            recipient=recipient_address,
+            amount=amount,
+            signature=signature
+        )
 
     @staticmethod
     def _hash(block: dict) -> str:
