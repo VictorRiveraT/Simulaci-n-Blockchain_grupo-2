@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Blockchain - ECDSA + PoW</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            padding: 24px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header h1 {
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 24px;
+        }
+        .panel {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 20px;
+        }
+        .panel h2 {
+            margin-top: 0;
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 8px;
+        }
+        label, button, .query-buttons button {
+            display: block;
+            width: 100%;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        input, textarea {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        textarea {
+            min-height: 80px;
+            font-family: monospace;
+        }
+        button, .query-buttons button {
+            background-color: #238636;
+            color: white;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 15px;
+            text-align: center;
+        }
+        button:hover, .query-buttons button:hover {
+            background-color: #2ea043;
+        }
+        button.secondary {
+            background-color: #21262d;
+            border: 1px solid #30363d;
+        }
+        button.secondary:hover {
+            background-color: #30363d;
+        }
+        .query-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        #results-panel {
+            margin-top: 24px;
+            background-color: #010409;
+        }
+        #results-panel h2 {
+            color: #3fb950;
+        }
+        #results-log {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 15px;
+            height: 400px;
+            overflow-y: scroll;
+            border-radius: 6px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .status {
+            font-size: 1.1em;
+            font-family: monospace;
+            margin-left: 10px;
+        }
+        .status.ok { color: #3fb950; }
+        .status.error { color: #f85149; }
+    </style>
+</head>
+<body>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+
+    <div class="container">
+        <header>
+            <h1>Simulador Blockchain <span style="color: #c9d1d9;">ECDSA + PoW</span>
+                <span id="status-light" class="status">Checking...</span>
+            </h1>
+        </header>
+
+        <div class="grid">
+            <div class="panel">
+                <h2>1. 🔑 Generación de Identidad (Usuario)</h2>
+                
+                <label for="private_key">Llave Privada (Private Key - Secreta)</label>
+                <textarea id="private_key" rows="2" placeholder="Generar clave aleatoria..."></textarea>
+                
+                <label for="public_key">Llave Pública (Public Key - Dirección)</label>
+                <textarea id="public_key" rows="3" placeholder="Esta es la dirección FROM/TO"></textarea>
+                
+                <button id="btn-generate-keys">RANDOM (Generar Par)</button>
+            </div>
+
+            <div class="panel">
+                <h2>2. 💸 Creación y Envío de Transacción</h2>
+                
+                <label for="sender_public_key">Remitente (sender pub) - Copia la Public Key de arriba</label>
+                <textarea id="sender_public_key" rows="3" placeholder="Llave Pública COMPLETA del remitente (FROM)"></textarea>
+
+                <label for="recipient">Destinatario (recipient)</label>
+                <input id="recipient" type="text" placeholder="Pega la Llave Pública (dirección) del destinatario">
+
+                <label for="amount">Monto (amount)</label>
+                <input id="amount" type="number" step="0.1" value="1.0">
+                
+                <label for="signature">Firma de Transacción (Message Signature)</label>
+                <textarea id="signature" rows="3" placeholder="Se genera al firmar el payload..." readonly></textarea>
+                
+                <button id="btn-sign-send">SIGN y VERIFY & SEND al Mempool</button>
+            </div>
+
+            <div class="panel">
+                <h2>3. ⛏️ Minería y Lectura (Nodo)</h2>
+                
+                <label for="miner_public_key">Dirección del minero (Public Key)</label>
+                <input id="miner_public_key" type="text" placeholder="Pega aquí la Public Key para recibir la recompensa...">
+
+                <button id="btn-mine">MINAR Bloque (PoW)</button>
+
+                <div class="query-buttons">
+                    <button class="secondary" id="btn-chain">Ver Cadena (/chain)</button>
+                    <button class="secondary" id="btn-mempool">Ver Mempool (/mempool)</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" id="results-panel">
+            <h2>Resumen y Panel de Resultados / Log</h2>
+            <div id="results-log">Bienvenido al Simulador. Iniciando...</div>
+        </div>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            const API_BASE_URL = '';
+
+            const ec = new elliptic.ec('secp256k1');
+
+            const logElement = document.getElementById('results-log');
+            const statusLight = document.getElementById('status-light');
+            
+            const btnGenerateKeys = document.getElementById('btn-generate-keys');
+            const privateKeyInput = document.getElementById('private_key');
+            const publicKeyInput = document.getElementById('public_key');
+
+            const btnSignSend = document.getElementById('btn-sign-send');
+            const senderPublicKeyInput = document.getElementById('sender_public_key');
+            const recipientInput = document.getElementById('recipient');
+            const amountInput = document.getElementById('amount');
+            const signatureInput = document.getElementById('signature');
+
+            const btnMine = document.getElementById('btn-mine');
+            const minerPublicKeyInput = document.getElementById('miner_public_key');
+            const btnChain = document.getElementById('btn-chain');
+            const btnMempool = document.getElementById('btn-mempool');
+
+            const log = (message, data = null) => {
+                const timestamp = new Date().toLocaleTimeString();
+                logElement.innerHTML = `[${timestamp}] ${message}\n` + 
+                                       (data ? `${JSON.stringify(data, null, 2)}\n\n` : '\n') + 
+                                       logElement.innerHTML;
+            };
+
+            const apiCall = async (method, endpoint, body = null) => {
+                try {
+                    const options = {
+                        method: method,
+                        headers: { 'Content-Type': 'application/json' }
+                    };
+                    if (body) {
+                        options.body = JSON.stringify(body);
+                    }
+                    
+                    const response = await fetch(API_BASE_URL + endpoint, options);
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.message || `Error ${response.status}`);
+                    }
+                    
+                    log(`[${method}] ${endpoint} - ÉXITO`, data);
+                    return data;
+
+                } catch (error) {
+                    log(`[${method}] ${endpoint} - ERROR`, { error: error.message });
+                    return null;
+                }
+            };
+            
+            const checkHealth = async () => {
+                const data = await apiCall('GET', '/health');
+                if (data && data.status === 'OK') {
+                    statusLight.textContent = 'Online';
+                    statusLight.className = 'status ok';
+                    log('Servidor conectado exitosamente.');
+                } else {
+                    statusLight.textContent = 'Offline';
+                    statusLight.className = 'status error';
+                    log('Error: No se pudo conectar al servidor en ' + API_BASE_URL);
+                }
+            };
+
+            btnGenerateKeys.onclick = async () => {
+                log('Generando nuevo par de llaves...');
+                const data = await apiCall('GET', '/keys/new');
+                if (data) {
+                    privateKeyInput.value = data.private_key;
+                    publicKeyInput.value = data.public_key;
+                    
+                    senderPublicKeyInput.value = data.public_key;
+                    minerPublicKeyInput.value = data.public_key;
+                }
+            };
+            
+            btnSignSend.onclick = async () => {
+                log('Iniciando firma y envío de transacción...');
+                
+                const privateKeyHex = privateKeyInput.value;
+                const senderPublicKey = senderPublicKeyInput.value;
+                const recipient = recipientInput.value;
+                const amount = parseFloat(amountInput.value);
+
+                if (!privateKeyHex || !senderPublicKey || !recipient || !amount) {
+                    log('ERROR: Faltan datos (Llave Privada, Llave Pública, Destinatario o Monto).');
+                    return;
+                }
+
+                try {
+                    const message = `${senderPublicKey}${recipient}${amount}`;
+
+                    const messageHash = CryptoJS.SHA256(message).toString();
+
+                    const keyPair = ec.keyFromPrivate(privateKeyHex, 'hex');
+                    const signature = keyPair.sign(messageHash, 'hex').toDER('hex');
+                    
+                    signatureInput.value = signature;
+                    log(`Mensaje: ${message}\nHash: ${messageHash}\nFirma: ${signature}`);
+
+                    const payload = {
+                        sender_public_key: senderPublicKey,
+                        recipient: recipient,
+                        amount: amount,
+                        signature: signature,
+                        message_hash: messageHash
+                    };
+                    await apiCall('POST', '/transactions/new', payload);
+
+                } catch (error) {
+                    log('ERROR DURANTE LA FIRMA', { error: error.message });
+                }
+            };
+            
+            btnMine.onclick = async () => {
+                const minerKey = minerPublicKeyInput.value;
+                if (!minerKey) {
+                    log('ERROR: Se necesita una "Dirección del minero (Public Key)" para recibir la recompensa.');
+                    return;
+                }
+                
+                log('Iniciando minado (Proof of Work)... Esto puede tardar unos segundos.');
+                await apiCall('POST', '/mine', { miner_public_key: minerKey });
+            };
+
+            btnChain.onclick = () => apiCall('GET', '/chain');
+            btnMempool.onclick = () => apiCall('GET', '/mempool');
+
+            checkHealth();
+        });
+    </script>
+</body>
+</html>
