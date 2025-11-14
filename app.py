@@ -8,91 +8,105 @@ from blockchain import Blockchain
 from keys import Keys
 
 app = Flask(__name__)
-
 CORS(app) 
-
 blockchain = Blockchain()
 
+# --- Endpoint de Salud (sin cambios) ---
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Endpoint de salud para verificar que el servidor está activo."""
-    return jsonify({"status": "OK", "message": "Simulador de Blockchain Activo"}), 200
+    return jsonify({"status": "OK", "message": "Simulador de Blockchain Activo", "difficulty": 4}), 200
 
+# --- Endpoint Raíz (sin cambios) ---
 @app.route('/', methods=['GET'])
 def get_index():
-    """
-    Sirve el archivo principal (index.html) cuando
-    alguien visita la URL raíz.
-    """
     return send_from_directory('.', 'index.html')
 
-@app.route('/keys/new', methods=['GET'])
-def new_key_pair():
-    """
-    Genera un nuevo par de llaves (privada y pública).
-    El frontend usará esto para el botón "RANDOM".
-    """
-    private_key, public_key = Keys.generate_key_pair()
-    response = {
-        'message': 'Nuevo par de llaves generado.',
-        'private_key': private_key,
-        'public_key': public_key
-    }
-    return jsonify(response), 200
+# --- ELIMINADO ---
+# El endpoint '/keys/new' se elimina porque 
+# 'indexvane.html' genera las llaves en el navegador (JavaScript).
 
+# --- NUEVO ENDPOINT: /transactions/verify_only ---
+@app.route('/transactions/verify_only', methods=['POST'])
+def verify_transaction_only():
+    """
+    Verifica una transacción (fondos y firma) SIN agregarla al mempool.
+    Usado por el botón "VERIFY" del Nodo Central.
+    """
+    values = request.get_json()
+    if not values:
+        return jsonify({'valid': False, 'error': 'Solicitud JSON inválida.'}), 400
+
+    # CAMBIO: 'sender_pub' y 'amount' como entero
+    required_fields = ['sender_pub', 'recipient', 'amount', 'signature']
+    if not all(k in values for k in required_fields):
+        return jsonify({'valid': False, 'error': 'Faltan campos (sender_pub, recipient, amount, signature)'}), 400
+
+    try:
+        # CAMBIO: Convertir a entero
+        amount = int(values['amount'])
+    except ValueError:
+        return jsonify({'valid': False, 'error': 'El monto debe ser un número entero.'}), 400
+        
+    success, message = blockchain.verify_transaction(
+        sender_pub=values['sender_pub'],
+        recipient=values['recipient'],
+        amount=amount,
+        signature=values['signature']
+    )
+
+    if not success:
+        return jsonify({'valid': False, 'error': message}), 400
+
+    return jsonify({'valid': True, 'message': message}), 200
+
+# --- ENDPOINT MODIFICADO: /transactions/new ---
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
     """
-    Recibe una nueva transacción (firmada) y la añade al mempool
-    después de la doble verificación.
+    Recibe una transacción (ya verificada por el frontend)
+    y la añade al mempool.
     """
     values = request.get_json()
-    
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida o vacía.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
 
-    required_fields = ['sender_public_key', 'recipient', 'amount', 'signature', 'message_hash']
+    # CAMBIO: 'sender_pub' y 'amount' como entero. No se recibe 'message_hash'.
+    required_fields = ['sender_pub', 'recipient', 'amount', 'signature']
     if not all(k in values for k in required_fields):
-        return jsonify({'message': 'Error: Faltan campos en la transacción (se requiere: sender_public_key, recipient, amount, signature, message_hash)'}), 400
+        return jsonify({'message': 'Error: Faltan campos (sender_pub, recipient, amount, signature)'}), 400
 
     try:
-        amount = float(values['amount'])
+        amount = int(values['amount'])
     except ValueError:
-        return jsonify({'message': 'Error: El monto debe ser un número.'}), 400
+        return jsonify({'message': 'Error: El monto debe ser un número entero.'}), 400
         
+    # Llama a la nueva función de blockchain
     success, message = blockchain.new_transaction(
-        sender_public_key=values['sender_public_key'],
+        sender_pub=values['sender_pub'],
         recipient=values['recipient'],
         amount=amount,
-        signature=values['signature'],
-        message_hash=values['message_hash']
+        signature=values['signature']
     )
 
     if not success:
         return jsonify({'message': f'Error al crear la transacción: {message}'}), 400
 
-    response = {
-        'message': message,
-        'transaction': values
-    }
+    response = {'message': message}
     return jsonify(response), 201
 
+# --- ENDPOINT MODIFICADO: /mine ---
 @app.route('/mine', methods=['POST'])
 def mine():
-    """
-    Mina un nuevo bloque, añade las transacciones del mempool
-    y entrega la recompensa al minero.
-    """
     values = request.get_json()
-    
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida o vacía.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
     
-    miner_public_key = values.get('miner_public_key')
-    if not miner_public_key:
-        return jsonify({'message': 'Error: Se requiere "miner_public_key" para asignar la recompensa.'}), 400
+    # CAMBIO: Recibe 'miner_address' en lugar de 'miner_public_key'
+    miner_address = values.get('miner_address')
+    if not miner_address:
+        return jsonify({'message': 'Error: Se requiere "miner_address".'}), 400
 
-    blockchain.node_id = miner_public_key
+    blockchain.node_id = miner_address
 
     last_block = blockchain.last_block
     nonce = blockchain.proof_of_work(last_block)
@@ -100,18 +114,21 @@ def mine():
     previous_hash = blockchain._hash(last_block)
     block = blockchain._new_block(previous_hash, nonce)
 
+    # La respuesta es la misma, el nuevo JS la mostrará en el log
     response = {
-        'message': "¡Nuevo bloque minado exitosamente!",
+        'message': "¡Nuevo bloque minado!",
         'index': block['index'],
         'transactions': block['transactions'],
         'nonce': block['nonce'],
         'previous_hash': block['previous_hash'],
+        'hash': blockchain._hash(block) # Añadido para el panel 5
     }
     return jsonify(response), 200
 
+# --- Endpoints de Consulta (Chain y Mempool sin cambios) ---
+
 @app.route('/chain', methods=['GET'])
 def full_chain():
-    """Retorna la cadena de bloques completa."""
     response = {
         'chain': blockchain.chain,
         'length': len(blockchain.chain),
@@ -120,46 +137,46 @@ def full_chain():
 
 @app.route('/mempool', methods=['GET'])
 def get_mempool():
-    """Retorna las transacciones pendientes (mempool)."""
-    response = {
-        'mempool': blockchain.mempool,
-        'count': len(blockchain.mempool),
-    }
-    return jsonify(response), 200
+    # El nuevo JS espera una lista, no un diccionario
+    return jsonify(blockchain.mempool), 200
 
+# --- NUEVO ENDPOINT: /balances ---
 @app.route('/balances', methods=['GET'])
 def get_all_balances():
     """
-    Calcula y retorna los saldos de todas las direcciones
-    que han participado en la blockchain.
+    Retorna los saldos de todas las direcciones.
     """
-    all_addresses = set()
-    for block in blockchain.chain:
-        for tx in block['transactions']:
-            if tx['sender_public_key'] != "SYSTEM":
-                all_addresses.add(tx['sender_public_key'])
-            all_addresses.add(tx['recipient'])
-    
-    balances = {}
-    for address in all_addresses:
-        balances[address] = blockchain.get_balance(address)
-    
-    return jsonify(balances), 200
+    return jsonify(blockchain.get_all_balances()), 200
 
+# --- NUEVO ENDPOINT: /leaders ---
+@app.route('/leaders', methods=['GET'])
+def get_leaders():
+    """
+    Retorna las recompensas acumuladas por los mineros.
+    """
+    return jsonify(blockchain.get_leaders()), 200
+
+# --- NUEVO ENDPOINT: /validate ---
+@app.route('/validate', methods=['GET'])
+def validate_chain():
+    """
+    Verifica la integridad de la cadena.
+    """
+    is_valid = blockchain.is_chain_valid()
+    if is_valid:
+        return jsonify({'message': 'La cadena es válida.', 'valid': True}), 200
+    else:
+        return jsonify({'message': 'ERROR: La cadena NO es válida.', 'valid': False}), 500
+
+# --- Endpoints de Nodos (sin cambios) ---
 @app.route('/nodes/register', methods=['POST'])
 def register_nodes():
     values = request.get_json()
-    
-    if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida o vacía.'}), 400
-    
     nodes = values.get('nodes')
     if nodes is None:
         return "Error: Por favor, proporcione una lista válida de nodos", 400
-
     for node in nodes:
         blockchain.register_node(node)
-
     response = {
         'message': 'Nuevos nodos han sido añadidos',
         'total_nodes': list(blockchain._nodes),
@@ -168,12 +185,9 @@ def register_nodes():
 
 @app.route('/nodes/resolve', methods=['GET'])
 def consensus():
-    return jsonify({'message': 'Consenso no implementado en este simulador'}), 501
+    return jsonify({'message': 'Consenso no implementado'}), 501
 
+# --- Ejecutar Servidor (sin cambios) ---
 if __name__ == '__main__':
-    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-    app.config['TEMPLATES_AUTO_RELOAD'] = True
-    
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    
     app.run(host='0.0.0.0', port=port, debug=True)
