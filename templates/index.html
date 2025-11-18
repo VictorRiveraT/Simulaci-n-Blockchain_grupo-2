@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Blockchain Simulator — ECDSA & PoW</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
   <script>
@@ -628,5 +628,7 @@
 
   <div class="footer">Blockchain Simulator con ECDSA y Proof of Work - Requiere Flask backend</div>
 </body>
-  <script src="space-background.js"></script>
+<script src="{{ url_for('static', filename='space-background.js') }}"></script>
 </html>
+
+

@@ -1,37 +1,36 @@
+# -*- coding: utf-8 -*-
 import sys
-from time import time # Necesario para el fix de timestamp
+from time import time
 from uuid import uuid4
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
-from flask import send_from_directory
 
-# Importamos la llave privada para el chequeo de seguridad
 from blockchain import Blockchain, FOUNDER_PRIVATE_KEY
 from keys import Keys
 
-app = Flask(__name__)
+# ===== CONFIGURACION CORRECTA DE FLASK =====
+app = Flask(__name__, 
+            static_folder='static',
+            static_url_path='/static',
+            template_folder='templates')
+
 CORS(app) 
 blockchain = Blockchain()
-alias_registry = {} # Registro de Alias en memoria
+alias_registry = {}
 
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "OK", "message": "Simulador de Blockchain Activo", "difficulty": 4}), 200
 
-@app.route('/', methods=['GET'])
+@app.route('/')
 def get_index():
-    return send_from_directory('.', 'index.html')
+    return render_template('index.html')
 
-# --- ENDPOINT /faucet CON SEGURIDAD AÑADIDA ---
 @app.route('/faucet', methods=['POST'])
 def faucet_funds():
-    """
-    Reparte fondos del Fundador (Faucet) a una dirección.
-    Requiere la Llave Privada del Fundador para autenticar.
-    """
     values = request.get_json()
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
     
     recipient_address = values.get('recipient_address')
     admin_private_key = values.get('admin_private_key')
@@ -39,27 +38,24 @@ def faucet_funds():
     if not recipient_address or not admin_private_key:
         return jsonify({'message': 'Error: Se requiere "recipient_address" y "admin_private_key".'}), 400
 
-    # Verificación de Seguridad: La llave debe coincidir con la llave del servidor
     if admin_private_key != FOUNDER_PRIVATE_KEY:
-        return jsonify({'message': 'Error: Llave Privada del Fundador inválida. ¡No eres el Admin!'}), 401 # 401 Unauthorized
+        return jsonify({'message': 'Error: Llave Privada del Fundador invalida. No eres el Admin!'}), 401
 
-    # Si la llave es correcta, proceder:
     success, message = blockchain.issue_faucet_funds(recipient_address)
     
     if not success:
-        return jsonify({'message': f'Error del Faucet: {message}'}), 500
+        return jsonify({'message': 'Error del Faucet: ' + str(message)}), 500
 
     return jsonify({
-        'message': f'¡Éxito! {message}. Se enviaron 100 monedas a tu dirección.',
-        'note': 'Deberás minar un bloque para confirmar la transacción.'
+        'message': 'Exito! ' + str(message) + '. Se enviaron 100 monedas a tu direccion.',
+        'note': 'Deberas minar un bloque para confirmar la transaccion.'
     }), 200
-# --- FIN DE /faucet ---
 
 @app.route('/register_alias', methods=['POST'])
 def register_alias():
     values = request.get_json()
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
         
     alias = values.get('alias')
     public_key = values.get('public_key')
@@ -68,14 +64,14 @@ def register_alias():
         return jsonify({'message': 'Error: Se requiere "alias" y "public_key".'}), 400
 
     if alias in alias_registry:
-        return jsonify({'message': f'Error: El alias "{alias}" ya está tomado.'}), 400
+        return jsonify({'message': 'Error: El alias "' + alias + '" ya esta tomado.'}), 400
         
     if public_key in alias_registry.values():
-         return jsonify({'message': 'Error: Esta Llave Pública ya tiene un alias registrado.'}), 400
+         return jsonify({'message': 'Error: Esta Llave Publica ya tiene un alias registrado.'}), 400
 
     alias_registry[alias] = public_key
-    print(f"Registro de Alias: {alias} -> {public_key}")
-    return jsonify({'message': f'¡Éxito! Alias "{alias}" registrado.'}), 201
+    print("Registro de Alias: " + alias + " -> " + public_key)
+    return jsonify({'message': 'Exito! Alias "' + alias + '" registrado.'}), 201
 
 @app.route('/aliases', methods=['GET'])
 def get_aliases():
@@ -85,7 +81,7 @@ def get_aliases():
 def verify_transaction_only():
     values = request.get_json()
     if not values:
-        return jsonify({'valid': False, 'error': 'Solicitud JSON inválida.'}), 400
+        return jsonify({'valid': False, 'error': 'Solicitud JSON invalida.'}), 400
 
     required_fields = ['sender_pub', 'recipient', 'amount', 'signature']
     if not all(k in values for k in required_fields):
@@ -94,7 +90,7 @@ def verify_transaction_only():
     try:
         amount = int(values['amount'])
     except ValueError:
-        return jsonify({'valid': False, 'error': 'El monto debe ser un número entero.'}), 400
+        return jsonify({'valid': False, 'error': 'El monto debe ser un numero entero.'}), 400
         
     success, message = blockchain.verify_transaction(
         sender_pub=values['sender_pub'],
@@ -112,7 +108,7 @@ def verify_transaction_only():
 def new_transaction():
     values = request.get_json()
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
 
     required_fields = ['sender_pub', 'recipient', 'amount', 'signature']
     if not all(k in values for k in required_fields):
@@ -121,7 +117,7 @@ def new_transaction():
     try:
         amount = int(values['amount'])
     except ValueError:
-        return jsonify({'message': 'Error: El monto debe ser un número entero.'}), 400
+        return jsonify({'message': 'Error: El monto debe ser un numero entero.'}), 400
         
     success, message = blockchain.new_transaction(
         sender_pub=values['sender_pub'],
@@ -131,17 +127,16 @@ def new_transaction():
     )
 
     if not success:
-        return jsonify({'message': f'Error al crear la transacción: {message}'}), 400
+        return jsonify({'message': 'Error al crear la transaccion: ' + str(message)}), 400
 
     response = {'message': message}
     return jsonify(response), 201
 
-# --- ENDPOINT /mine MODIFICADO PARA EL FIX DE TIMESTAMP ---
 @app.route('/mine', methods=['POST'])
 def mine():
     values = request.get_json()
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
     
     miner_address = values.get('miner_address')
     if not miner_address:
@@ -150,17 +145,13 @@ def mine():
     blockchain.node_id = miner_address
     last_block = blockchain.last_block
     
-    # --- FIX DE CONSISTENCIA ---
-    current_time = time() # Calcular el tiempo una sola vez
-    
-    nonce = blockchain.proof_of_work(last_block, current_time) # Pasar el tiempo fijo
-    
+    current_time = time()
+    nonce = blockchain.proof_of_work(last_block, current_time)
     previous_hash = blockchain._hash(last_block)
-    block = blockchain._new_block(previous_hash, nonce, current_time=current_time) # Usar el tiempo fijo
-    # --- FIN DE FIX ---
+    block = blockchain._new_block(previous_hash, nonce, current_time=current_time)
 
     response = {
-        'message': "¡Nuevo bloque minado!",
+        'message': "Nuevo bloque minado!",
         'index': block['index'],
         'transactions': block['transactions'],
         'nonce': block['nonce'],
@@ -169,7 +160,6 @@ def mine():
     }
     return jsonify(response), 200
 
-# ... (El resto de los endpoints /chain, /mempool, /balances, /leaders, /validate, /nodes/register, /nodes/resolve van aquí) ...
 @app.route('/chain', methods=['GET'])
 def full_chain():
     response = {
@@ -194,20 +184,20 @@ def get_leaders():
 def validate_chain():
     is_valid = blockchain.is_chain_valid()
     if is_valid:
-        return jsonify({'message': 'La cadena es válida.', 'valid': True}), 200
+        return jsonify({'message': 'La cadena es valida.', 'valid': True}), 200
     else:
-        return jsonify({'message': 'ERROR: La cadena NO es válida.', 'valid': False}), 500
+        return jsonify({'message': 'ERROR: La cadena NO es valida.', 'valid': False}), 500
 
 @app.route('/nodes/register', methods=['POST'])
 def register_nodes():
     values = request.get_json()
     nodes = values.get('nodes')
     if nodes is None:
-        return "Error: Por favor, proporcione una lista válida de nodos", 400
+        return "Error: Por favor, proporcione una lista valida de nodos", 400
     for node in nodes:
         blockchain.register_node(node)
     response = {
-        'message': 'Nuevos nodos han sido añadidos',
+        'message': 'Nuevos nodos han sido anadidos',
         'total_nodes': list(blockchain._nodes),
     }
     return jsonify(response), 201
@@ -217,5 +207,17 @@ def consensus():
     return jsonify({'message': 'Consenso no implementado'}), 501
 
 if __name__ == '__main__':
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    app.run(host='0.0.0.0', port=port, debug=True)
+    import os
+    try:
+        port = int(os.environ.get('PORT', 5000))
+        print("="*50)
+        print("Iniciando servidor en puerto " + str(port) + "...")
+        print("Abre tu navegador en: http://127.0.0.1:" + str(port))
+        print("="*50)
+        app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+    except Exception as e:
+        print("ERROR AL INICIAR SERVIDOR:")
+        print(str(e))
+        import traceback
+        traceback.print_exc()
+        input("Presiona Enter para salir...")

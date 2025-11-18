@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import hashlib
 import json
 from time import time
@@ -8,24 +9,24 @@ from collections import OrderedDict
 from keys import Keys
 
 # --- CONSTANTES GLOBALES Y SECRETAS ---
-# Genera un par de llaves permanente para el Fundador/Génesis (secreta)
+# Genera un par de llaves permanente para el Fundador/Genesis (secreta)
 _FOUNDER_KEYS = Keys.generate_key_pair()
 FOUNDER_PRIVATE_KEY = _FOUNDER_KEYS[0]
 FOUNDER_ADDRESS = _FOUNDER_KEYS[1] 
 MINING_REWARD = 10
 
 print("*"*50)
-print(f"🔑 Llave PRIVADA Fundador (Admin): {FOUNDER_PRIVATE_KEY}")
+print(f"Llave PRIVADA Fundador (Admin): {FOUNDER_PRIVATE_KEY}")
 print(f"   (Copia esta llave para usar el Faucet)")
-print(f"🔑 Dirección del Fundador (Génesis): {FOUNDER_ADDRESS}")
-print(f"💰 El Fundador tiene 5000 monedas para usar como Faucet.")
+print(f"Direccion del Fundador (Genesis): {FOUNDER_ADDRESS}")
+print(f"El Fundador tiene 5000 monedas para usar como Faucet.")
 print("*"*50)
 # --- FIN DE CONSTANTES ---
 
 
 class Blockchain:
     """
-    Clase que maneja la lógica de la cadena de bloques.
+    Clase que maneja la logica de la cadena de bloques.
     """
 
     def __init__(self):
@@ -34,7 +35,7 @@ class Blockchain:
         self._nodes = set()
         self.node_id = str(uuid4()).replace('-', '')
 
-        # Se llama una sola vez para crear el bloque Génesis
+        # Se llama una sola vez para crear el bloque Genesis
         self._new_block(
             previous_hash='0' * 64,
             nonce=0,
@@ -51,7 +52,6 @@ class Blockchain:
         payload_string = json.dumps(sorted_payload, separators=(',', ':')).encode()
         return hashlib.sha256(payload_string).hexdigest()
 
-    # --- FUNCIÓN CORREGIDA: Acepta el tiempo como argumento ---
     def _new_block(self, previous_hash: str, nonce: int, genesis: bool = False, current_time: float = None):
         """
         Crea un nuevo Bloque. Usa el tiempo pasado por el endpoint /mine.
@@ -77,7 +77,7 @@ class Blockchain:
 
         block = {
             'index': len(self._chain) + 1,
-            'timestamp': current_time or time(), # Usa el tiempo fijo o el actual
+            'timestamp': current_time or time(),
             'transactions': transactions_in_block,
             'nonce': nonce,
             'previous_hash': previous_hash or self._hash(self.last_block),
@@ -86,7 +86,6 @@ class Blockchain:
         self._current_transactions = []
         self._chain.append(block)
         return block
-    # --- FIN DE MODIFICACIÓN ---
 
     def new_transaction(self, sender_pub: str, recipient: str, amount: int, signature: str) -> tuple[bool, str]:
         is_valid, message = self.verify_transaction(sender_pub, recipient, amount, signature)
@@ -100,15 +99,15 @@ class Blockchain:
             'amount': amount,
             'signature': signature
         })
-        return True, "Transacción verificada y añadida al Mempool."
+        return True, "Transaccion verificada y anadida al Mempool."
     
     def verify_transaction(self, sender_pub: str, recipient: str, amount: int, signature: str) -> tuple[bool, str]:
         """
-        Verifica una transacción (fondos y firma) SIN agregarla al mempool.
+        Verifica una transaccion (fondos y firma) SIN agregarla al mempool.
         """
         current_balance = self.get_balance(sender_pub)
         if current_balance < amount:
-            return False, f"Verificación de fondos fallida. El remitente solo tiene {current_balance}."
+            return False, f"Verificacion de fondos fallida. El remitente solo tiene {current_balance}."
 
         payload = {
             'amount': amount,
@@ -118,9 +117,9 @@ class Blockchain:
         message_hash_hex = self._stable_hash_payload(payload)
         
         if not Keys.verify_signature(sender_pub, signature, message_hash_hex):
-            return False, "Verificación de firma fallida. La firma no es válida."
+            return False, "Verificacion de firma fallida. La firma no es valida."
 
-        return True, "Transacción verificada (firma y fondos OK)."
+        return True, "Transaccion verificada (firma y fondos OK)."
 
     def get_balance(self, public_key_address: str) -> int:
         balance = 0
@@ -137,18 +136,18 @@ class Blockchain:
 
     def issue_faucet_funds(self, recipient_address: str, amount: int = 100) -> tuple[bool, str]:
         """
-        El Fundador (dueño del nodo) firma y envía fondos a una dirección.
+        El Fundador (dueno del nodo) firma y envia fondos a una direccion.
         """
         founder_balance = self.get_balance(FOUNDER_ADDRESS)
         if founder_balance < amount:
-            return False, "El Faucet está vacío. El Fundador no tiene fondos."
+            return False, "El Faucet esta vacio. El Fundador no tiene fondos."
 
         payload = {'amount': amount, 'recipient': recipient_address, 'sender': FOUNDER_ADDRESS}
         message_hash_hex = self._stable_hash_payload(payload)
         signature = Keys.sign_digest(FOUNDER_PRIVATE_KEY, message_hash_hex)
         
         if not signature:
-            return False, "Error interno al firmar la transacción del Faucet."
+            return False, "Error interno al firmar la transaccion del Faucet."
 
         return self.new_transaction(
             sender_pub=FOUNDER_ADDRESS,
@@ -157,7 +156,6 @@ class Blockchain:
             signature=signature
         )
 
-    # --- FUNCIÓN CORREGIDA: Ahora hashea el bloque completo con tiempo fijo ---
     def proof_of_work(self, last_block: dict, current_time: float = None) -> int:
         """
         Prueba de Trabajo: Busca el nonce hasheando el BLOQUE COMPLETO
@@ -165,7 +163,7 @@ class Blockchain:
         """
         nonce = 0
         
-        # Preparamos las transacciones que irán en el bloque candidato (recompensa + mempool)
+        # Preparamos las transacciones que iran en el bloque candidato (recompensa + mempool)
         transactions_in_block = []
         transactions_in_block.append({
             'sender': "SYSTEM",
@@ -179,7 +177,7 @@ class Blockchain:
             # Creamos el bloque candidato TEMPORAL
             guess_block = {
                 'index': len(self._chain) + 1,
-                'timestamp': current_time or time(), # Usa el tiempo fijo
+                'timestamp': current_time or time(),
                 'transactions': transactions_in_block,
                 'nonce': nonce,
                 'previous_hash': self._hash(last_block),
@@ -191,16 +189,12 @@ class Blockchain:
                 return nonce
             
             nonce += 1
-    # --- FIN DE MODIFICACIÓN ---
     
     @staticmethod
     def _hash(block: dict) -> str:
         block_string = json.dumps(block, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
-    # ... (el resto de las funciones de consulta: get_all_balances, get_leaders, is_chain_valid, etc. van aquí) ...
-
-    # El resto de las funciones son las que ya teníamos (omitidas por espacio)
     def get_all_balances(self) -> dict:
         all_addresses = set()
         for block in self.chain:
@@ -245,9 +239,11 @@ class Blockchain:
     @property
     def last_block(self) -> dict:
         return self._chain[-1]
+    
     @property
     def chain(self) -> list:
         return list(self._chain)
+    
     @property
     def mempool(self) -> list:
         return list(self._current_transactions)

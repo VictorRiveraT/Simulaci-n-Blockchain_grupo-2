@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import ecdsa
 import ecdsa.util
 import hashlib
@@ -8,7 +9,7 @@ HASH_ALGORITHM = hashlib.sha256
 
 class Keys:
     """
-    Clase para manejar la generación de llaves ECDSA, firmas y verificación.
+    Clase para manejar la generacion de llaves ECDSA, firmas y verificacion.
     """
 
     @staticmethod
@@ -21,7 +22,7 @@ class Keys:
 
     @staticmethod
     def sign_message(private_key_hex: str, message: str) -> str:
-        """ [Función de compatibilidad] """
+        """ [Funcion de compatibilidad] """
         private_key_bytes = binascii.unhexlify(private_key_hex)
         private_key = ecdsa.SigningKey.from_string(private_key_bytes, curve=CURVE)
         message_bytes = message.encode('utf-8')
