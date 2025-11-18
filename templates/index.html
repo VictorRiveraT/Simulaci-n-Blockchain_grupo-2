@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -161,12 +161,55 @@
     
     let lastVerifiedTransaction = null; 
 
+    function toggleTheme() {
+      const html = document.documentElement;
+      const currentTheme = html.getAttribute('data-theme');
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', newTheme);
+      localStorage.setItem('theme', newTheme);
+    }
+
+    function updateScrollProgress() {
+      const scrollProgress = document.querySelector('.scroll-progress');
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+      const scrollPercent = (scrollTop / scrollHeight) * 100;
+      scrollProgress.style.width = scrollPercent + '%';
+    }
+
+    function updateScrollToTopButton() {
+      const scrollBtn = document.querySelector('.scroll-to-top');
+      if (window.pageYOffset > 300) {
+        scrollBtn.classList.add('visible');
+      } else {
+        scrollBtn.classList.remove('visible');
+      }
+    }
+
+    function scrollToTop() {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+
     window.addEventListener('load', () => {
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        document.querySelector('.theme-toggle').addEventListener('click', toggleTheme);
+
+        window.addEventListener('scroll', () => {
+          updateScrollProgress();
+          updateScrollToTopButton();
+        });
+
+        document.querySelector('.scroll-to-top').addEventListener('click', scrollToTop);
         
         document.getElementById('btnRandomKeys').onclick = async () => {
             const alias = document.getElementById('alias').value;
             if (!alias) {
-                log("ERROR: Debes escribir un Alias (nombre) para registrar.", '❌ Error de Registro');
+                log("ERROR: Debes escribir un Alias (nombre) para registrar.", 'Error de Registro');
                 return;
             }
             
@@ -418,7 +461,7 @@
             let recipient_address = recipient;
 
             if (!recipient_address || !private_key) {
-                log("ERROR: Debes poner un Destinatario Y la Llave Privada del Fundador.", '❌ Error de Faucet');
+                log("ERROR: Debes poner un Destinatario Y la Llave Privada del Fundador.", 'Error de Faucet');
                 return;
             }
 
@@ -428,7 +471,7 @@
                     log(`Alias "${recipient_address}" resuelto a ${resolvedKey.substring(0, 20)}...`);
                     recipient_address = resolvedKey;
                 } else {
-                    log(`ERROR: Alias "${recipient_address}" no encontrado.`, '❌ Error de Faucet');
+                    log(`ERROR: Alias "${recipient_address}" no encontrado.`, 'Error de Faucet');
                     return;
                 }
             }
@@ -460,7 +503,7 @@
   </script>
 </head>
 <body>
-      <!-- Efectos de fondo espacial -->
+  <div class="scroll-progress"></div>
   <div class="cosmic-background"></div>
   <div class="nebula-effect"></div>
   <div class="particles" id="particles"></div>
@@ -475,6 +518,9 @@
         </div>
         <div class="subtitle">Sistema descentralizado con ECDSA y Proof of Work</div>
       </div>
+      <button class="theme-toggle" aria-label="Toggle theme">
+        <div class="theme-toggle-slider">🌙</div>
+      </button>
     </div>
   </header>
 
@@ -617,18 +663,17 @@
     <section class="card col-span-3">
       <h2>Consultas de Cadena</h2>
       <div class="grid-4">
-        <button class="btn" id="btnHealth">/health</button>
-        <button class="btn" id="btnChain">/chain</button>
-        <button class="btn" id="btnValidate">/validate</button>
-        <button class="btn" id="btnLeaders">/leaders</button>
-        <button class="btn" id="btnBalances">/balances</button>
+        <button class="btn" id="btnHealth">/HEALTH</button>
+        <button class="btn" id="btnChain">/CHAIN</button>
+        <button class="btn" id="btnValidate">/VALIDATE</button>
+        <button class="btn" id="btnLeaders">/LEADERS</button>
+        <button class="btn" id="btnBalances">/BALANCES</button>
       </div>
     </section>
   </main>
 
+  <button class="scroll-to-top" aria-label="Scroll to top">↑</button>
+
   <div class="footer">Blockchain Simulator con ECDSA y Proof of Work - Requiere Flask backend</div>
 </body>
-<script src="{{ url_for('static', filename='space-background.js') }}"></script>
 </html>
-
-
