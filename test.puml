@@ -1,0 +1,451 @@
+@startuml
+!theme vibrant
+skinparam sequenceMessageAlign center
+skinparam backgroundColor #1a1a2e
+skinparam roundcorner 15
+skinparam shadowing false
+
+' Colores personalizados
+skinparam participant {
+    BackgroundColor #16213e
+    BorderColor #0f3460
+    FontColor #e4e4e4
+}
+skinparam actor {
+    BackgroundColor #533483
+    BorderColor #8e44ad
+    FontColor #ffffff
+}
+
+title **Blockchain Simulator - Diagrama de Secuencia**\n//Sistema con ECDSA, PoW y Faucet//
+actor Usuario as user
+participant "Frontend\n(index.html)" as frontend
+participant "Flask API\n(app.py)" as api
+participant "Blockchain\n(blockchain.py)" as blockchain
+participant "Keys\n(keys.py)" as keys
+database "Mempool\n& Chain" as storage
+
+== 1. INICIALIZACIÓN DEL SISTEMA ==
+
+activate api
+api -> blockchain ** : __init__()
+activate blockchain
+blockchain -> blockchain : _new_block(genesis=True)
+blockchain -> keys : generate_key_pair()
+activate keys
+keys --> blockchain : (FOUNDER_PRIVATE_KEY,\nFOUNDER_ADDRESS)
+deactivate keys
+note right of blockchain
+  **Bloque Génesis creado**
+  - Index: 1
+  - Fundador: 5000 monedas
+  - Hash previo: "0" x 64
+end note
+blockchain --> api : Blockchain inicializada
+deactivate blockchain
+deactivate api
+
+...Servidor iniciado...
+
+user -> frontend ** : Abre aplicación
+activate frontend
+frontend -> api : GET /health
+activate api
+api --> frontend : {"status": "OK",\n"difficulty": 4}
+deactivate api
+
+== 2. GENERACIÓN DE IDENTIDAD Y REGISTRO ==
+
+user -> frontend : Ingresa alias\ny click "GENERAR"
+activate frontend
+frontend -> frontend : generateKeyPair()
+note right of frontend
+  **Criptografía ECDSA**
+  - Curva: secp256k1
+  - Genera par de llaves
+  - privateKeyHex
+  - publicKeyHex
+end note
+
+frontend -> api : POST /register_alias\n{alias, public_key}
+activate api
+api -> api : Valida alias único
+alt Alias ya existe
+    api --> frontend : 400 - Alias tomado
+else Alias disponible
+    api -> storage : Guardar alias
+    activate storage
+    storage --> api : OK
+    deactivate storage
+    api --> frontend : 201 - Alias registrado
+end
+deactivate api
+
+frontend -> api : GET /aliases
+activate api
+api -> storage : Obtener todos los alias
+activate storage
+storage --> api : {alias: public_key}
+deactivate storage
+api --> frontend : Diccionario de alias
+deactivate api
+
+frontend -> frontend : Actualizar caches\n(aliasCache,\nreverseAliasCache)
+deactivate frontend
+
+== 3. OBTENCIÓN DE FONDOS INICIALES (FAUCET) ==
+
+user -> frontend : Ingresa destinatario\ny llave privada fundador
+activate frontend
+frontend -> api : POST /faucet\n{recipient_address,\nadmin_private_key}
+activate api
+
+api -> api : Verificar llave privada\nadmin == FOUNDER_PRIVATE_KEY
+alt Llave inválida
+    api --> frontend : 401 - No autorizado
+else Llave válida
+    api -> blockchain : issue_faucet_funds(recipient)
+    activate blockchain
+    
+    blockchain -> blockchain : get_balance(FOUNDER_ADDRESS)
+    blockchain -> blockchain : Verificar fondos >= 100
+    
+    blockchain -> blockchain : Crear payload\n{amount, recipient, sender}
+    blockchain -> blockchain : _stable_hash_payload(payload)
+    
+    blockchain -> keys : sign_digest(FOUNDER_PRIVATE_KEY,\nmessage_hash)
+    activate keys
+    keys -> keys : SigningKey.sign_digest()
+    note right of keys
+      **Firma ECDSA-DER**
+      - Hash del payload
+      - Firma con llave privada
+    end note
+    keys --> blockchain : signature_hex
+    deactivate keys
+    
+    blockchain -> blockchain : new_transaction(sender_pub,\nrecipient, 100, signature)
+    
+    blockchain -> blockchain : verify_transaction()
+    note right of blockchain
+      **Verificación doble**
+      1. Fondos suficientes
+      2. Firma válida
+    end note
+    
+    blockchain -> storage : Agregar a mempool
+    activate storage
+    storage --> blockchain : OK
+    deactivate storage
+    
+    blockchain --> api : (True, "Transacción agregada")
+    deactivate blockchain
+    
+    api --> frontend : 200 - Fondos enviados
+end
+deactivate api
+
+frontend -> frontend : Actualizar UI
+frontend --> user : Mostrar éxito
+deactivate frontend
+
+== 4. CREACIÓN Y FIRMA DE TRANSACCIÓN ==
+
+user -> frontend : Completa formulario:\nsender, recipient, amount
+activate frontend
+
+frontend -> frontend : Resolver alias a public_key
+note right of frontend
+  Si recipient es alias,
+  buscar en aliasCache
+end note
+
+frontend -> frontend : signTransaction(privateKey, payload)
+frontend -> frontend : hashPayload(payload)
+note right of frontend
+  **Hash estable**
+  - Ordena claves alfabéticamente
+  - JSON stringify consistente
+  - SHA-256 del payload
+end note
+
+frontend -> frontend : ec.keyFromPrivate(privateKey)
+frontend -> frontend : key.sign(payloadHash)
+note right of frontend
+  **Firma ECDSA-DER**
+  Usando elliptic.js
+  en el cliente
+end note
+
+frontend -> frontend : Guardar signature en formulario
+frontend --> user : Transacción firmada
+deactivate frontend
+
+== 5. VERIFICACIÓN DE TRANSACCIÓN ==
+
+user -> frontend : Click "VERIFICAR"
+activate frontend
+
+frontend -> api : POST /transactions/verify_only\n{sender_pub, recipient,\namount, signature}
+activate api
+
+api -> blockchain : verify_transaction(sender_pub,\nrecipient, amount, signature)
+activate blockchain
+
+blockchain -> blockchain : get_balance(sender_pub)
+note right of blockchain
+  **Cálculo de balance**
+  - Suma recibidos en chain
+  - Resta enviados en chain
+  - Resta pendientes en mempool
+end note
+
+blockchain -> blockchain : Verificar balance >= amount
+alt Fondos insuficientes
+    blockchain --> api : (False, "Fondos insuficientes")
+    api --> frontend : 400 - Invalid
+    frontend -> frontend : validationCard.classList\n.add('invalid')
+    frontend --> user : ❌ Verificación fallida
+else Fondos suficientes
+    blockchain -> blockchain : _stable_hash_payload(payload)
+    
+    blockchain -> keys : verify_signature(sender_pub,\nsignature, message_hash)
+    activate keys
+    keys -> keys : VerifyingKey.from_string(public_key)
+    keys -> keys : verify_digest(signature, hash)
+    note right of keys
+      **Verificación ECDSA**
+      - Decodifica firma DER
+      - Verifica con llave pública
+    end note
+    keys --> blockchain : True/False
+    deactivate keys
+    
+    alt Firma inválida
+        blockchain --> api : (False, "Firma inválida")
+        api --> frontend : 400 - Invalid
+        frontend -> frontend : validationCard.classList\n.add('invalid')
+        frontend --> user : ❌ Verificación fallida
+    else Firma válida
+        blockchain --> api : (True, "Verificación exitosa")
+        deactivate blockchain
+        api --> frontend : 200 - Valid
+        deactivate api
+        
+        frontend -> frontend : validationCard.classList\n.add('valid')
+        frontend -> frontend : btnSendToMempool.disabled = false
+        frontend -> frontend : Guardar lastVerifiedTransaction
+        frontend --> user : ✅ Verificación exitosa
+    end
+end
+deactivate frontend
+
+== 6. ENVÍO AL MEMPOOL ==
+
+user -> frontend : Click "ENVIAR AL MEMPOOL"
+activate frontend
+
+frontend -> api : POST /transactions/new\n{sender_pub, recipient,\namount, signature}
+activate api
+
+api -> blockchain : new_transaction(sender_pub,\nrecipient, amount, signature)
+activate blockchain
+
+blockchain -> blockchain : verify_transaction()\n(segunda verificación)
+
+blockchain -> storage : Agregar transacción\na _current_transactions
+activate storage
+storage --> blockchain : OK
+deactivate storage
+
+blockchain --> api : (True, "Transacción agregada")
+deactivate blockchain
+
+api --> frontend : 201 - Transacción creada
+deactivate api
+
+frontend -> api : GET /mempool
+activate api
+api -> storage : Obtener _current_transactions
+activate storage
+storage --> api : Lista de transacciones
+deactivate storage
+api --> frontend : Array de transacciones
+deactivate api
+
+frontend -> frontend : renderMempool(transactions)
+frontend --> user : Mostrar mempool actualizado
+deactivate frontend
+
+== 7. PROCESO DE MINADO (PROOF OF WORK) ==
+
+user -> frontend : Ingresa miner_address\ny click "MINAR BLOQUE"
+activate frontend
+
+frontend -> api : POST /mine\n{miner_address}
+activate api
+
+api -> blockchain : Asignar node_id = miner_address
+api -> blockchain : last_block = blockchain.last_block
+
+api -> api : current_time = time()
+note right of api
+  **Fix de timestamp**
+  Calcular tiempo UNA vez
+  para consistencia
+end note
+
+api -> blockchain : proof_of_work(last_block,\ncurrent_time)
+activate blockchain
+
+blockchain -> blockchain : nonce = 0
+blockchain -> blockchain : Preparar transactions_in_block:\n1. Recompensa SYSTEM → minero\n2. Transacciones del mempool
+
+loop Buscar nonce válido
+    blockchain -> blockchain : Crear guess_block:\n{index, timestamp, transactions,\nnonce, previous_hash}
+    
+    blockchain -> blockchain : guess_hash = _hash(guess_block)
+    note right of blockchain
+      **Algoritmo PoW**
+      - SHA-256 del bloque completo
+      - Buscar hash con 4 ceros iniciales
+      - Timestamp fijo durante búsqueda
+    end note
+    
+    alt guess_hash[:4] != "0000"
+        blockchain -> blockchain : nonce++
+    else Hash válido encontrado
+        blockchain --> api : nonce
+    end
+end
+
+deactivate blockchain
+
+api -> blockchain : previous_hash = _hash(last_block)
+
+api -> blockchain : _new_block(previous_hash,\nnonce, current_time)
+activate blockchain
+
+blockchain -> blockchain : Crear transactions_in_block:\n1. Recompensa minero\n2. Mempool completo
+
+blockchain -> blockchain : Crear nuevo bloque:\n{index, timestamp,\ntransactions, nonce,\nprevious_hash}
+
+blockchain -> storage : Agregar bloque a _chain
+activate storage
+storage --> blockchain : OK
+deactivate storage
+
+blockchain -> storage : Limpiar _current_transactions
+storage --> blockchain : OK
+deactivate storage
+
+blockchain --> api : Nuevo bloque
+deactivate blockchain
+
+api -> blockchain : _hash(block)
+activate blockchain
+blockchain --> api : block_hash
+deactivate blockchain
+
+api --> frontend : 200 - Bloque minado\n{index, transactions,\nnonce, previous_hash, hash}
+deactivate api
+
+frontend -> frontend : Actualizar blockCandidateDisplay
+frontend -> frontend : renderMempool([])
+note right of frontend
+  Mempool ahora vacío
+  tras la inclusión en bloque
+end note
+
+frontend -> api : GET /leaders
+activate api
+api -> blockchain : get_leaders()
+activate blockchain
+blockchain -> blockchain : Contar recompensas\npor minero
+blockchain --> api : {miner: total_rewards}
+deactivate blockchain
+api --> frontend : Ranking de mineros
+deactivate api
+
+frontend -> api : GET /balances
+activate api
+api -> blockchain : get_all_balances()
+activate blockchain
+blockchain -> blockchain : Calcular balance\nde todas las direcciones
+blockchain --> api : {address: balance}
+deactivate blockchain
+api --> frontend : Balances actualizados
+deactivate api
+
+frontend -> frontend : Renderizar tablas\ncon alias resueltos
+frontend --> user : Mostrar bloque minado\ny estadísticas
+deactivate frontend
+
+== 8. VALIDACIÓN DE CADENA ==
+
+user -> frontend : Click "/validate"
+activate frontend
+
+frontend -> api : GET /validate
+activate api
+
+api -> blockchain : is_chain_valid()
+activate blockchain
+
+loop Para cada bloque (desde el 2do)
+    blockchain -> blockchain : Verificar previous_hash\n== hash del bloque anterior
+    
+    alt Hashes no coinciden
+        blockchain --> api : False
+        api --> frontend : 500 - Cadena inválida
+        frontend --> user : ❌ Cadena corrupta
+    else Hashes coinciden
+        blockchain -> blockchain : Verificar _valid_proof(last_hash, nonce)
+        note right of blockchain
+          Revalidar que el nonce
+          produce un hash válido
+          con 4 ceros iniciales
+        end note
+        
+        alt Proof inválido
+            blockchain --> api : False
+            api --> frontend : 500 - Cadena inválida
+            frontend --> user : ❌ PoW inválido
+        end
+    end
+end
+
+blockchain --> api : True
+deactivate blockchain
+
+api --> frontend : 200 - Cadena válida
+deactivate api
+
+frontend --> user : ✅ Cadena íntegra
+deactivate frontend
+
+== 9. CONSULTA DE CADENA COMPLETA ==
+
+user -> frontend : Click "/chain"
+activate frontend
+
+frontend -> api : GET /chain
+activate api
+
+api -> blockchain : chain (property)
+activate blockchain
+blockchain -> storage : Obtener _chain
+activate storage
+storage --> blockchain : Lista de bloques
+deactivate storage
+blockchain --> api : chain
+deactivate blockchain
+
+api --> frontend : {chain: [...],\nlength: N}
+deactivate api
+
+frontend -> frontend : Mostrar JSON en log
+frontend --> user : Cadena completa visible
+deactivate frontend
+
+@enduml
