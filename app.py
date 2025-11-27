@@ -1,36 +1,176 @@
 # -*- coding: utf-8 -*-
 import sys
+import os
 from time import time
-from uuid import uuid4
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 
-from blockchain import Blockchain, FOUNDER_PRIVATE_KEY
+from blockchain import Blockchain, FOUNDER_PRIVATE_KEY, FOUNDER_ADDRESS, MINING_REWARD
 from keys import Keys
 
-# ===== CONFIGURACION CORRECTA DE FLASK =====
+# ==========================================
+# CONFIGURACIÓN DE LA APLICACIÓN FLASK
+# ==========================================
+# Se definen las rutas para archivos estáticos y plantillas HTML
 app = Flask(__name__, 
             static_folder='static',
             static_url_path='/static',
             template_folder='templates')
 
+app.config['SECRET_KEY'] = 'secreto_seguro_blockchain' # Clave requerida para la gestión de sesiones y websockets
 CORS(app) 
-blockchain = Blockchain()
-alias_registry = {}
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({"status": "OK", "message": "Simulador de Blockchain Activo", "difficulty": 4}), 200
+# Inicialización de SocketIO para habilitar la comunicación bidireccional en tiempo real
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Instancia de la Blockchain (gestiona la base de datos y la lógica de cadena)
+blockchain = Blockchain()
+
+# Registro de Alias: Mapeo de nombres legibles a direcciones públicas
+alias_registry = {
+    'FOUNDER': FOUNDER_ADDRESS
+}
+
+# ==========================================
+# RUTAS DE VISUALIZACIÓN Y ALIAS
+# ==========================================
 
 @app.route('/')
 def get_index():
+    """ Sirve el index.html usando Flask 'render_template' """
     return render_template('index.html')
+
+@app.route('/aliases', methods=['GET'])
+def get_aliases():
+    """ Retorna el registro completo de alias (nombre -> Public Key) """
+    return jsonify(alias_registry), 200
+
+@app.route('/register_alias', methods=['POST'])
+def register_alias():
+    """ Registra un nuevo alias para una llave pública """
+    values = request.get_json()
+    alias = values.get('alias')
+    public_key = values.get('public_key')
+
+    if not alias or not public_key:
+        return jsonify({'error': 'Se requiere alias y public_key.'}), 400
+    
+    if alias in alias_registry:
+        return jsonify({'error': f'El alias "{alias}" ya está en uso.'}), 409
+    
+    # Simple check para que no se use la clave FOUNDER
+    if public_key == FOUNDER_ADDRESS:
+        return jsonify({'error': 'No puedes registrarte con la llave del Fundador.'}), 403
+    
+    alias_registry[alias] = public_key
+    print(f"Alias registrado: {alias} -> {public_key[:10]}...")
+    return jsonify({'message': f'Alias "{alias}" registrado con éxito.'}), 201
+
+
+# ==========================================
+# RUTAS DE TRANSACCIONES Y FAUCET
+# ==========================================
+
+def _get_transaction_data(values):
+    """ Función utilitaria para extraer y validar datos de transacción """
+    sender_pub = values.get('sender_pub')
+    recipient = values.get('recipient')
+    amount = values.get('amount')
+    signature = values.get('signature')
+
+    if not all([sender_pub, recipient, amount, signature]):
+        return None, {'error': 'Faltan campos obligatorios: sender_pub, recipient, amount, signature.'}
+
+    try:
+        amount = int(amount)
+        if amount <= 0:
+             return None, {'error': 'El monto debe ser un número entero positivo.'}
+    except ValueError:
+        return None, {'error': 'El monto debe ser un número entero.'}
+    
+    payload = {
+        'sender': sender_pub,
+        'recipient': recipient,
+        'amount': amount,
+    }
+    
+    # Calcular el hash que se firmó para la verificación
+    tx_hash = blockchain._hash(payload)
+    
+    return payload, tx_hash, signature
+
+@app.route('/transactions/verify_only', methods=['POST'])
+def verify_transaction():
+    """ 
+    Verifica la firma y los fondos antes de que el frontend intente enviar la transacción.
+    """
+    values = request.get_json()
+    if not values:
+        return jsonify({'error': 'Solicitud JSON inválida.'}), 400
+
+    payload, tx_hash, signature = _get_transaction_data(values)
+    if payload is None:
+        return jsonify(tx_hash), 400 # tx_hash en este caso contiene el error
+
+    # 1. Verificar Firma Criptográfica
+    is_signature_valid = Keys.verify_signature(
+        public_key_hex=payload['sender'], 
+        signature_hex=signature, 
+        message_hash_hex=tx_hash
+    )
+
+    if not is_signature_valid:
+        return jsonify({'valid': False, 'error': 'Firma criptográfica inválida.'}), 401
+
+    # 2. Verificar Fondos Suficientes
+    sender_balance = blockchain.get_balance(payload['sender'])
+    if sender_balance < payload['amount']:
+        return jsonify({'valid': False, 'error': f'Fondos insuficientes. Saldo actual: {sender_balance}.'}), 402
+
+    return jsonify({'valid': True, 'message': 'Firma y fondos verificados correctamente.'}), 200
+
+@app.route('/transactions/new', methods=['POST'])
+def new_transaction():
+    """
+    Recibe una nueva transacción (firmada) y la añade al mempool.
+    Se asume que el frontend ya verificó la firma y los fondos (o se re-verifica).
+    """
+    values = request.get_json()
+    if not values:
+        return jsonify({'error': 'Solicitud JSON inválida.'}), 400
+    
+    # Se extraen los datos y se asume que la estructura es correcta para el mempool
+    sender = values.get('sender_pub')
+    recipient = values.get('recipient')
+    amount = values.get('amount')
+    signature = values.get('signature')
+
+    if not all([sender, recipient, amount, signature]):
+        return jsonify({'error': 'Faltan datos en la transacción (sender_pub, recipient, amount, signature).'}), 400
+
+    # Se añade al mempool
+    success = blockchain.new_transaction(sender, recipient, amount, signature)
+    
+    if success:
+        # Emitir evento WebSocket para actualizar el frontend
+        socketio.emit('actualizacion_mempool', {'msg': 'Nueva transacción añadida'})
+        return jsonify({
+            'message': 'Transacción añadida al Mempool', 
+            'tx_count': len(blockchain.mempool)
+        }), 201
+    else:
+        return jsonify({'error': 'La transacción no pudo ser añadida.'}), 500
 
 @app.route('/faucet', methods=['POST'])
 def faucet_funds():
+    """
+    Permite al Fundador enviar 100 monedas a cualquier dirección.
+    Requiere la llave privada fija del Fundador para autenticación.
+    """
     values = request.get_json()
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
+        return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
     
     recipient_address = values.get('recipient_address')
     admin_private_key = values.get('admin_private_key')
@@ -38,186 +178,115 @@ def faucet_funds():
     if not recipient_address or not admin_private_key:
         return jsonify({'message': 'Error: Se requiere "recipient_address" y "admin_private_key".'}), 400
 
+    # **CRÍTICO: Verificación de la llave privada del administrador**
     if admin_private_key != FOUNDER_PRIVATE_KEY:
-        return jsonify({'message': 'Error: Llave Privada del Fundador invalida. No eres el Admin!'}), 401
+        return jsonify({'message': 'Error: Llave Privada del Fundador inválida. No eres el Admin!'}), 401
 
-    success, message = blockchain.issue_faucet_funds(recipient_address)
-    
-    if not success:
-        return jsonify({'message': 'Error del Faucet: ' + str(message)}), 500
+    # Crear el payload de la transacción
+    payload = {
+        'sender': FOUNDER_ADDRESS,
+        'recipient': recipient_address,
+        'amount': 100, # Monto fijo del Faucet
+    }
 
-    return jsonify({
-        'message': 'Exito! ' + str(message) + '. Se enviaron 100 monedas a tu direccion.',
-        'note': 'Deberas minar un bloque para confirmar la transaccion.'
-    }), 200
+    # Firmar el payload con la llave privada del Fundador
+    tx_hash = blockchain._hash(payload)
+    signature = Keys.sign_digest(FOUNDER_PRIVATE_KEY, tx_hash)
 
-@app.route('/register_alias', methods=['POST'])
-def register_alias():
-    values = request.get_json()
-    if not values:
-        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
-        
-    alias = values.get('alias')
-    public_key = values.get('public_key')
-
-    if not alias or not public_key:
-        return jsonify({'message': 'Error: Se requiere "alias" y "public_key".'}), 400
-
-    if alias in alias_registry:
-        return jsonify({'message': 'Error: El alias "' + alias + '" ya esta tomado.'}), 400
-        
-    if public_key in alias_registry.values():
-         return jsonify({'message': 'Error: Esta Llave Publica ya tiene un alias registrado.'}), 400
-
-    alias_registry[alias] = public_key
-    print("Registro de Alias: " + alias + " -> " + public_key)
-    return jsonify({'message': 'Exito! Alias "' + alias + '" registrado.'}), 201
-
-@app.route('/aliases', methods=['GET'])
-def get_aliases():
-    return jsonify(alias_registry), 200
-
-@app.route('/transactions/verify_only', methods=['POST'])
-def verify_transaction_only():
-    values = request.get_json()
-    if not values:
-        return jsonify({'valid': False, 'error': 'Solicitud JSON invalida.'}), 400
-
-    required_fields = ['sender_pub', 'recipient', 'amount', 'signature']
-    if not all(k in values for k in required_fields):
-        return jsonify({'valid': False, 'error': 'Faltan campos (sender_pub, recipient, amount, signature)'}), 400
-
-    try:
-        amount = int(values['amount'])
-    except ValueError:
-        return jsonify({'valid': False, 'error': 'El monto debe ser un numero entero.'}), 400
-        
-    success, message = blockchain.verify_transaction(
-        sender_pub=values['sender_pub'],
-        recipient=values['recipient'],
-        amount=amount,
-        signature=values['signature']
+    # Añadir al mempool (asumimos que la firma es correcta y los fondos son suficientes)
+    success = blockchain.new_transaction(
+        FOUNDER_ADDRESS, 
+        recipient_address, 
+        100, 
+        signature
     )
 
-    if not success:
-        return jsonify({'valid': False, 'error': message}), 400
+    if success:
+        socketio.emit('actualizacion_mempool', {'msg': 'Transacción Faucet añadida'})
+        return jsonify({'message': f'100 monedas enviadas a {recipient_address[:10]}... desde el Faucet.'}), 201
+    else:
+        return jsonify({'message': 'Error al añadir la transacción del Faucet.'}), 500
 
-    return jsonify({'valid': True, 'message': message}), 200
-
-@app.route('/transactions/new', methods=['POST'])
-def new_transaction():
-    values = request.get_json()
-    if not values:
-        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
-
-    required_fields = ['sender_pub', 'recipient', 'amount', 'signature']
-    if not all(k in values for k in required_fields):
-        return jsonify({'message': 'Error: Faltan campos (sender_pub, recipient, amount, signature)'}), 400
-
-    try:
-        amount = int(values['amount'])
-    except ValueError:
-        return jsonify({'message': 'Error: El monto debe ser un numero entero.'}), 400
-        
-    success, message = blockchain.new_transaction(
-        sender_pub=values['sender_pub'],
-        recipient=values['recipient'],
-        amount=amount,
-        signature=values['signature']
-    )
-
-    if not success:
-        return jsonify({'message': 'Error al crear la transaccion: ' + str(message)}), 400
-
-    response = {'message': message}
-    return jsonify(response), 201
+# ==========================================
+# RUTAS DE MINADO Y CONSULTA
+# ==========================================
 
 @app.route('/mine', methods=['POST'])
-def mine():
+def mine_block():
+    """ Endpoint para iniciar el proceso de minado (Proof of Work) """
     values = request.get_json()
     if not values:
-        return jsonify({'message': 'Error: Solicitud JSON invalida.'}), 400
-    
+        return jsonify({'error': 'Solicitud JSON inválida.'}), 400
+
     miner_address = values.get('miner_address')
     if not miner_address:
-        return jsonify({'message': 'Error: Se requiere "miner_address".'}), 400
+        return jsonify({'error': 'Se requiere la dirección del minero (miner_address).'}), 400
 
-    blockchain.node_id = miner_address
-    last_block = blockchain.last_block
+    new_block = blockchain.mine(miner_address)
     
-    current_time = time()
-    nonce = blockchain.proof_of_work(last_block, current_time)
-    previous_hash = blockchain._hash(last_block)
-    block = blockchain._new_block(previous_hash, nonce, current_time=current_time)
-
+    # Emitir evento WebSocket para actualizar el frontend
+    socketio.emit('bloque_minado', {'index': new_block['index'], 'msg': 'Nuevo bloque minado'})
+    
     response = {
-        'message': "Nuevo bloque minado!",
-        'index': block['index'],
-        'transactions': block['transactions'],
-        'nonce': block['nonce'],
-        'previous_hash': block['previous_hash'],
-        'hash': blockchain._hash(block)
+        'message': 'Nuevo Bloque Forjado',
+        'index': new_block['index'],
+        'transactions': new_block['transactions'],
+        'nonce': new_block['nonce'],
+        'previous_hash': new_block['previous_hash'],
+        'hash': new_block['hash'],
     }
     return jsonify(response), 200
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """ Endpoint de salud y dificultad de PoW """
+    return jsonify({
+        'status': 'OK', 
+        'message': 'Simulador de Blockchain Activo', 
+        'difficulty': 4,
+        'chain_length': len(blockchain.chain),
+        'mempool_size': len(blockchain.mempool)
+    }), 200
 
 @app.route('/chain', methods=['GET'])
 def full_chain():
-    response = {
-        'chain': blockchain.chain,
-        'length': len(blockchain.chain),
-    }
-    return jsonify(response), 200
+    """ Retorna la cadena completa """
+    return jsonify({'chain': blockchain.chain, 'length': len(blockchain.chain)}), 200
 
 @app.route('/mempool', methods=['GET'])
-def get_mempool():
+def get_mempool(): 
+    """ Retorna las transacciones pendientes en el Mempool. """
     return jsonify(blockchain.mempool), 200
 
 @app.route('/balances', methods=['GET'])
-def get_all_balances():
+def get_all_balances(): 
+    """ Retorna el estado actual de cuentas (saldos). """
     return jsonify(blockchain.get_all_balances()), 200
 
 @app.route('/leaders', methods=['GET'])
-def get_leaders():
+def get_leaders(): 
+    """ Retorna la tabla de clasificación de mineros por recompensas. """
     return jsonify(blockchain.get_leaders()), 200
 
 @app.route('/validate', methods=['GET'])
 def validate_chain():
-    is_valid = blockchain.is_chain_valid()
-    if is_valid:
-        return jsonify({'message': 'La cadena es valida.', 'valid': True}), 200
-    else:
-        return jsonify({'message': 'ERROR: La cadena NO es valida.', 'valid': False}), 500
+    """ Verifica la integridad criptográfica de toda la cadena. """
+    valid = blockchain.is_chain_valid()
+    return jsonify({'valid': valid, 'message': 'Cadena válida' if valid else 'Cadena inválida'}), 200 if valid else 500
 
-@app.route('/nodes/register', methods=['POST'])
-def register_nodes():
-    values = request.get_json()
-    nodes = values.get('nodes')
-    if nodes is None:
-        return "Error: Por favor, proporcione una lista valida de nodos", 400
-    for node in nodes:
-        blockchain.register_node(node)
-    response = {
-        'message': 'Nuevos nodos han sido anadidos',
-        'total_nodes': list(blockchain._nodes),
-    }
-    return jsonify(response), 201
 
-@app.route('/nodes/resolve', methods=['GET'])
-def consensus():
-    return jsonify({'message': 'Consenso no implementado'}), 501
+# ==========================================
+# PUNTO DE ENTRADA CON SOCKETIO
+# ==========================================
 
 if __name__ == '__main__':
-    import os
-    try:
-        port = int(os.environ.get('PORT', 5000))
-        print("="*50)
-        print("Iniciando servidor en puerto " + str(port) + "...")
-        print("Abre tu navegador en: http://127.0.0.1:" + str(port))
-        print("="*50)
-        app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
-    except Exception as e:
-        print("ERROR AL INICIAR SERVIDOR:")
-        print(str(e))
-        import traceback
-        traceback.print_exc()
-        input("Presiona Enter para salir...")
+    # Configuración del puerto basada en variables de entorno (para Render)
+    port = int(os.environ.get('PORT', 5000))
+    print("="*50)
+    print("Iniciando Servidor Blockchain con soporte WebSockets")
+    print(f"Puerto de escucha: {port}")
+    print(f"URL Local: http://127.0.0.1:{port}")
+    print("="*50)
+    
+    # Usar socketio.run en lugar de app.run cuando se usa Flask-SocketIO
+    socketio.run(app, host='0.0.0.0', port=port)
