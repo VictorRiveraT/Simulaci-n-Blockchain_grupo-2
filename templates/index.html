@@ -12,7 +12,6 @@
     const EC = elliptic.ec;
     const ec = new EC('secp256k1');
 
-    // --- INICIO CÓDIGO WEBSOCKETS ---
     const socket = io();
 
     socket.on('connect', () => {
@@ -20,29 +19,25 @@
         setBadge(true, '(EN VIVO)');
     });
 
-    // Cuando llega una nueva transacción, actualizamos la tabla mempool
     socket.on('actualizacion_mempool', (data) => {
         console.log("📩 Evento: " + data.msg);
         document.getElementById('btnShowMempool').click();
     });
 
-    // Cuando se mina un bloque, actualizamos TODO
     socket.on('bloque_minado', (data) => {
         console.log(`⛏️ BLOQUE #${data.index} MINADO!`);
-        // Simulamos clics para refrescar la pantalla
+      
         document.getElementById('btnBalances').click();
         document.getElementById('btnLeaders').click();
         document.getElementById('btnChain').click();
         document.getElementById('btnShowMempool').click();
         
-        // Efecto visual en el badge
         const b = document.getElementById('statusBadge');
         b.textContent = `¡NUEVO BLOQUE #${data.index}!`;
         b.style.backgroundColor = '#10b981';
         b.style.color = 'black';
         setTimeout(() => setBadge(true, '(EN VIVO)'), 3000);
     });
-    // --- FIN CÓDIGO WEBSOCKETS ---
 
     let aliasCache = {}; 
     let reverseAliasCache = {}; 
@@ -83,27 +78,20 @@
     const pubToAddress = (publicKeyHex) => {
         if (!publicKeyHex) return "";
         
-        // Casos especiales del sistema
         if (publicKeyHex === 'SYSTEM') return '⚙️ SYSTEM';
         
-        // 1. Buscar si tiene Alias
         const alias = reverseAliasCache[publicKeyHex];
         
-        // 2. Recortar la llave (Primeros 8..Últimos 6)
         const shortKey = publicKeyHex.substring(0, 10) + '...' + publicKeyHex.substring(publicKeyHex.length - 6);
 
-        // 3. LÓGICA VISUAL:
         if (alias) {
-            // Si es el Founder
             if (alias.includes("FOUNDER")) {
                 return `<span style="color:#fcd34d; font-weight:bold;">${alias}</span> <code style="opacity:0.7; font-size:0.9em">(${shortKey})</code>`;
             }
             
-            // Usuario normal: Muestra "Alias (Llave...)"
             return `<span style="color:#4ade80; font-weight:bold;">${alias}</span> <code style="opacity:0.7; font-size:0.9em">(${shortKey})</code>`;
         }
         
-        // Si no tiene alias, solo muestra la llave
         return `<code style="opacity:0.8">${shortKey}</code>`;
     };
 
@@ -702,7 +690,6 @@
         <input id="faucet_recipient" placeholder="Ej: victor (o la llave 04...)" />
         <div style="height:10px"></div>
 
-        <!-- Llave Privada del Fundador -->
         <label>Llave Privada del Fundador (Admin)</label>
         <textarea id="faucet_private_key" rows="2" placeholder="Copiar de la consola del servidor..." autocomplete="off"></textarea>        
         <div style="height:10px"></div>  
