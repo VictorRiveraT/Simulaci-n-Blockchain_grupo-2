@@ -1,4 +1,5 @@
 Flask
+Flask-Cors
 ecdsa
-flask-cors
 gunicorn
+Flask-SocketIO
