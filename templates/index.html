@@ -4,16 +4,53 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Blockchain Simulator — ECDSA & PoW</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}"> 
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha256/0.9.0/sha256.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+
   <script>
     const EC = elliptic.ec;
     const ec = new EC('secp256k1');
 
+    // --- INICIO CÓDIGO WEBSOCKETS (Adoptado de Jander) ---
+    const socket = io();
+    socket.on('connect', () => {
+        console.log("Conectado en Tiempo Real");
+        setBadge(true, '(EN VIVO)');
+    });
+
+    // Cuando llega una nueva transacción, actualizamos el mempool
+    socket.on('actualizacion_mempool', (data) => {
+        console.log("Evento: " + data.msg);
+        document.getElementById('btnShowMempool').click();
+    });
+
+    // Cuando se mina un bloque, actualizamos TODO
+    socket.on('bloque_minado', (data) => {
+        console.log(`BLOQUE #${data.index} MINADO!`);
+        // Actualizamos todas las tablas
+        document.getElementById('btnBalances').click();
+        document.getElementById('btnLeaders').click();
+        document.getElementById('btnChain').click();
+        document.getElementById('btnShowMempool').click();
+        
+        // Efecto visual en el badge
+        const b = document.getElementById('statusBadge');
+        b.textContent = `¡NUEVO BLOQUE #${data.index}!`;
+        b.style.backgroundColor = '#10b981';
+        b.style.color = 'black';
+        setTimeout(() => setBadge(true, '(EN VIVO)'), 3000);
+    });
+    // --- FIN CÓDIGO WEBSOCKETS ---
+
+
+    // --- INICIO LÓGICA DE SIMULADOR (Tu Versión) ---
     let aliasCache = {}; 
     let reverseAliasCache = {}; 
     
+    // Funciones de Hashing y Cripto (sin cambios)
     const stableStringify = (v) => {
       if (v === null || typeof v !== 'object') return JSON.stringify(v);
       if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
@@ -31,7 +68,8 @@
     const generateKeyPair = () => {
         const key = ec.genKeyPair();
         const privateKeyHex = key.getPrivate('hex');
-        const publicKeyHex = key.getPublic('hex'); 
+        // El formato sin comprimir, es el que acepta la verificación en Python (al inicio con '04')
+        const publicKeyHex = '04' + key.getPublic('hex'); 
         return { privateKeyHex, publicKeyHex };
     };
 
@@ -40,6 +78,7 @@
             const key = ec.keyFromPrivate(privateKeyHex, 'hex');
             const payloadHash = hashPayload(payload);
             const signature = key.sign(payloadHash, 'hex');
+            // La firma debe ser en formato DER para la verificación en Python
             return signature.toDER('hex'); 
         } catch (e) {
             console.error("Error signing:", e);
@@ -48,14 +87,32 @@
     };
     
     const pubToAddress = (publicKeyHex) => {
-        if (!publicKeyHex || publicKeyHex.length < 40) return publicKeyHex;
-        if (publicKeyHex === 'SYSTEM' || publicKeyHex === '0000_GENESIS_0000') return publicKeyHex;
+        if (!publicKeyHex) return "";
         
+        // Casos especiales del sistema
+        if (publicKeyHex === 'SYSTEM') return 'SYSTEM';
+        
+        // 1. Buscar si tiene Alias
         const alias = reverseAliasCache[publicKeyHex];
-        const shortKey = publicKeyHex.substring(0, 40) + '...';
-        return alias ? `${alias} (${shortKey})` : shortKey;
+        
+        // 2. Recortar la llave (quitamos el prefijo '04' para el recorte)
+        const shortKey = publicKeyHex.substring(2, 10) + '...' + publicKeyHex.substring(publicKeyHex.length - 6);
+
+        // 3. LÓGICA VISUAL: Mostrar Alias (Llave)
+        if (alias) {
+            // Si es el Founder
+            if (alias === "FOUNDER") {
+                return `<span style="color:#fcd34d; font-weight:bold;">${alias}</span> <code style="opacity:0.7; font-size:0.9em">(${shortKey})</code>`;
+            }
+            // Usuario normal: Muestra "Alias (Llave...)"
+            return `<span style="color:#4ade80; font-weight:bold;">${alias}</span> <code style="opacity:0.7; font-size:0.9em">(${shortKey})</code>`;
+        }
+        
+        // Si no tiene alias, solo muestra la llave
+        return `<code style="opacity:0.8">${shortKey}</code>`;
     };
 
+    // Funciones de UI/Log/API (sin cambios, usando la API como base)
     const log = (obj, title) => {
       const el = document.getElementById('log');
       const prev = el.innerHTML;
@@ -64,8 +121,8 @@
     };
     const setBadge = (ok, extra='') => {
       const b = document.getElementById('statusBadge');
-      if (ok) { b.textContent = 'Status: OK ' + extra; b.style.color = '#86efac'; }
-      else { b.textContent = 'Status: ERROR ' + extra; b.style.color = '#fca5a5'; }
+      if (ok) { b.textContent = 'Status: OK ' + extra; b.style.color = '#86efac'; b.style.backgroundColor = '#16a34a';}
+      else { b.textContent = 'Status: ERROR ' + extra; b.style.color = '#fca5a5'; b.style.backgroundColor = '#b91c1c';}
     };
     const api = (path, opts={}) =>
       fetch(path, { headers: { 'Content-Type':'application/json' }, ...opts })
@@ -161,50 +218,8 @@
     
     let lastVerifiedTransaction = null; 
 
-    function toggleTheme() {
-      const html = document.documentElement;
-      const currentTheme = html.getAttribute('data-theme');
-      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-      html.setAttribute('data-theme', newTheme);
-      localStorage.setItem('theme', newTheme);
-    }
-
-    function updateScrollProgress() {
-      const scrollProgress = document.querySelector('.scroll-progress');
-      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-      const scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-      const scrollPercent = (scrollTop / scrollHeight) * 100;
-      scrollProgress.style.width = scrollPercent + '%';
-    }
-
-    function updateScrollToTopButton() {
-      const scrollBtn = document.querySelector('.scroll-to-top');
-      if (window.pageYOffset > 300) {
-        scrollBtn.classList.add('visible');
-      } else {
-        scrollBtn.classList.remove('visible');
-      }
-    }
-
-    function scrollToTop() {
-      window.scrollTo({
-        top: 0,
-        behavior: 'smooth'
-      });
-    }
-
+    // Funciones de control de la UI 
     window.addEventListener('load', () => {
-        const savedTheme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', savedTheme);
-
-        document.querySelector('.theme-toggle').addEventListener('click', toggleTheme);
-
-        window.addEventListener('scroll', () => {
-          updateScrollProgress();
-          updateScrollToTopButton();
-        });
-
-        document.querySelector('.scroll-to-top').addEventListener('click', scrollToTop);
         
         document.getElementById('btnRandomKeys').onclick = async () => {
             const alias = document.getElementById('alias').value;
@@ -258,6 +273,7 @@
                 return;
             }
             
+            // Resolución de Alias
             if (recipient && !recipient.startsWith('04')) {
                 const resolvedKey = aliasCache[recipient];
                 if (resolvedKey) {
@@ -305,6 +321,7 @@
             const signature = document.getElementById('signature_node').value;
             const publickey_for_verification = document.getElementById('publickey_node').value;
 
+            // Resolución de Alias
             if (recipient && !recipient.startsWith('04')) {
                 const resolvedKey = aliasCache[recipient];
                 if (resolvedKey) {
@@ -313,6 +330,7 @@
                 } else {
                     log(`ERROR: Alias "${recipient}" no encontrado.`, 'Error de Verificación');
                     validationCard.classList.add('invalid');
+                    btnSendToMempool.disabled = true;
                     return;
                 }
             }
@@ -378,7 +396,7 @@
                 lastVerifiedTransaction = null;
 
             } catch (e) { 
-                log(e, 'ERROR al enviar al Mempool'); 
+                log(e.data?.error || e, 'ERROR al enviar al Mempool'); 
                 document.getElementById('btnBalances').click();
             }
         };
@@ -419,16 +437,26 @@
                 document.getElementById('btnShowMempool').click(); 
 
             } catch (e) { 
-                log(e, 'ERROR /mine'); 
+                log(e.data?.error || e, 'ERROR /mine'); 
             }
         };
 
         document.getElementById('btnHealth').onclick = async () => {
-          try { const d = await api('/health'); setBadge(true, `(diff=${d.difficulty})`); log(d, '/health'); }
-          catch (e) { setBadge(false); log(e, 'ERROR /health'); }
+          try { 
+            const d = await api('/health'); 
+            setBadge(true, `(diff=4, len=${d.chain_length}, pend=${d.mempool_size})`); 
+            log(d, '/health'); 
+          }
+          catch (e) { setBadge(false); log(e.data?.error || e, 'ERROR /health'); }
         };
-        document.getElementById('btnChain').onclick = async () => { try { log(await api('/chain'), '/chain'); } catch(e){ log(e,'ERROR /chain'); } };
-        document.getElementById('btnValidate').onclick = async () => { try { log(await api('/validate'), '/validate'); } catch(e){ log(e,'ERROR /validate'); } };
+        document.getElementById('btnChain').onclick = async () => { try { log(await api('/chain'), '/chain'); } catch(e){ log(e.data?.error || e,'ERROR /chain'); } };
+        document.getElementById('btnValidate').onclick = async () => { 
+          try { 
+            const d = await api('/validate');
+            log(d, '/validate'); 
+            if (!d.valid) setBadge(false, '(CADENA INVÁLIDA)');
+          } catch(e){ log(e.data?.error || e,'ERROR /validate'); } 
+        };
         
         document.getElementById('btnLeaders').onclick = async () => {
           try { 
@@ -436,7 +464,7 @@
             const d = await api('/leaders');
             log(d, '/leaders (Ranking)');                 
             renderTable('Recompensas acumuladas por minero', d, 'leadersTable', 'Recompensa');
-          } catch (e) { log(e, 'ERROR /leaders'); }
+          } catch (e) { log(e.data?.error || e, 'ERROR /leaders'); }
         };
         document.getElementById('btnBalances').onclick = async () => {
           try { 
@@ -444,7 +472,7 @@
             const d = await api('/balances');
             log(d, '/balances (Saldos)');
             renderTable('Saldo neto por address (Public Key)', d, 'balancesTable', 'Saldo');
-          } catch (e) { log(e, 'ERROR /balances'); }
+          } catch (e) { log(e.data?.error || e, 'ERROR /balances'); }
         };
         document.getElementById('btnShowMempool').onclick = async () => { 
             try { 
@@ -452,7 +480,7 @@
                 const d = await api('/mempool'); 
                 renderMempool(d, 'mempoolResults'); 
                 log(d, '/mempool (Transacciones Pendientes)'); 
-            } catch(e) { log(e,'ERROR /mempool'); } 
+            } catch(e) { log(e.data?.error || e,'ERROR /mempool'); } 
         };
 
         document.getElementById('btn_faucet_send').onclick = async () => {
@@ -465,6 +493,7 @@
                 return;
             }
 
+            // Resolución de Alias (sólo si no parece ser una llave)
             if (!recipient_address.startsWith('04')) {
                 const resolvedKey = aliasCache[recipient_address];
                 if (resolvedKey) {
@@ -501,32 +530,60 @@
         init();
     });
   </script>
+  <style>
+    /* Estilos mínimos para que se vea decente */
+    :root { --bg:#0f172a; --card:#111827; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --danger:#ef4444; --border:#1f2937; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial; background: var(--bg); color: var(--text); }
+    header { padding: 24px; border-bottom:1px solid var(--border); position: sticky; top:0; background: linear-gradient(180deg, #0f172a 0%, rgba(15,23,42,.9) 100%); backdrop-filter: blur(6px); z-index: 100; }
+    main { max-width: 1400px; margin: 24px auto; padding: 0 16px 48px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .col-span-3 { grid-column: span 3; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    h2 { margin-top: 0; font-size: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 15px;}
+    label { display: block; font-size: 0.9em; color: var(--muted); margin-bottom: 4px; }
+    input, textarea { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); margin-bottom: 10px; resize: vertical; font-family: monospace;}
+    .btn { padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; background: #334155; color: var(--text); font-weight: bold; transition: background 0.2s; }
+    .btn:hover { background: #475569; }
+    .btn.primary { background: var(--accent); color: black; }
+    .btn.primary:hover { background: #14b8a6; }
+    .row { display: flex; gap: 16px; align-items: stretch; }
+    .row > div { flex: 1; }
+    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; }
+    .log { background: #000; color: #ccc; padding: 10px; border-radius: 4px; height: 300px; overflow-y: scroll; font-size: 0.85em; border: 1px solid var(--border); }
+    pre { margin: 0; padding: 0; white-space: pre-wrap; word-break: break-all; }
+    code { background: #1e293b; padding: 2px 4px; border-radius: 3px; font-size: 0.9em; }
+    .table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+    .table th, .table td { padding: 8px; border-bottom: 1px solid var(--border); }
+    .table th { text-align: left; color: #a3a3a3; }
+    .table tbody tr:last-child td { border-bottom: none; }
+    .muted { color: var(--muted); font-size: 0.9em; }
+    .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; background: #334155; color: var(--muted); }
+    
+    /* Estados de Validación */
+    .validation-card { border: 1px solid #1f2937; }
+    .validation-card.valid { border-color: var(--accent); box-shadow: 0 0 10px rgba(34, 197, 94, 0.4); }
+    .validation-card.invalid { border-color: var(--danger); box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
+    .validation-card .btn.primary { opacity: 0.5; cursor: not-allowed; }
+    .validation-card.valid .btn.primary { opacity: 1; cursor: pointer; }
+
+    .faucet-card { border-left: 5px solid #06b6d4; }
+  </style>
 </head>
 <body>
-  <div class="scroll-progress"></div>
-  <div class="cosmic-background"></div>
-  <div class="nebula-effect"></div>
-  <div class="particles" id="particles"></div>
-
   <header>
-    <div class="header-content">
-      <div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div class="logo">₿</div>
-          <h1>Blockchain Simulator</h1>
-          <span class="badge" id="statusBadge">Status: ...</span>
-        </div>
-        <div class="subtitle">Sistema descentralizado con ECDSA y Proof of Work</div>
+    <div style="display: flex; align-items: center; justify-content: space-between; max-width: 1400px; margin: 0 auto;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="font-size: 24px; color: #fcd34d;">B</div>
+        <h1>Blockchain Simulator</h1>
+        <span class="badge" id="statusBadge">Status: ...</span>
       </div>
-      <button class="theme-toggle" aria-label="Toggle theme">
-        <div class="theme-toggle-slider">🌙</div>
-      </button>
+      <div class="subtitle" style="color: var(--muted); font-size: 0.9em;">Sistema descentralizado con ECDSA y Proof of Work</div>
     </div>
   </header>
 
   <main>
     <section class="card">
-      <h2>Generación de Identidad</h2>
+      <h2>1. Generación de Identidad</h2>
       
       <label>Alias (Tu nombre de usuario)</label>
       <input id="alias" placeholder="Ej: victor, satoshi, ..." />
@@ -544,13 +601,13 @@
     </section>
 
     <section class="card">
-      <h2>Creación y Firma de Transacción</h2>
+      <h2>2. Creación y Firma de Transacción</h2>
       <label>Remitente (sender_pub - Copia la Public Key de arriba)</label>
       <textarea id="sender_pub_tx" rows="2" placeholder="Llave Pública COMPLETA del remitente (FROM)"></textarea>
       <div style="height:10px"></div>
       
       <label>Destinatario (recipient)</label>
-      <input id="recipient_tx" placeholder="Alias o Llave Pública de otro usuario (TO)" value="04634f590b074a123f81e3630f146a066c06173a144e54e4c9c221191060934e6284f1b4a558509c2a8c3d706f9d34346747530e7d0263f10646c8a513511111" />
+      <input id="recipient_tx" placeholder="Alias o Llave Pública de otro usuario (TO)" value="FOUNDER" />
       <div style="height:10px"></div>
       
       <label>Monto (amount)</label>
@@ -560,11 +617,11 @@
       <button class="btn" id="btnSignTx">FIRMAR TRANSACCIÓN</button>
       <div style="height:10px"></div>
       <label>Firma de Transacción (Message Signature)</label>
-      <textarea id="signature_tx" rows="2" placeholder="Se genera al firmar el payload..."></textarea>
+      <textarea id="signature_tx" rows="2" placeholder="Se genera al firmar el payload..." readonly></textarea>
     </section>
 
     <section class="card validation-card" id="validationCard">
-      <h2>Verificación de Firma y Fondos</h2>
+      <h2>3. Verificación de Firma y Fondos</h2>
       <div class="muted">
         El Nodo Central verifica la autenticidad (firma) y la disponibilidad de fondos antes de aceptar una transacción.
       </div>
@@ -577,7 +634,7 @@
       <textarea id="publickey_node" rows="2" placeholder="Copia la Public Key del Remitente"></textarea>
       <div style="height:10px"></div>
 
-      <div class="row">
+      <div class="row" style="gap: 10px;">
           <button class="btn" id="btnVerifyTxNode">VERIFICAR</button>
           <button class="btn primary" id="btnSendToMempool">ENVIAR AL MEMPOOL</button>
       </div>
@@ -586,7 +643,7 @@
     <div class="card col-span-3" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 24px;">
         
         <div class="card" style="margin: 0; padding: 20px;">
-            <h2>Mempool - Transacciones Pendientes</h2>
+            <h2>4. Mempool - Transacciones Pendientes</h2>
             <div class="muted" style="margin-bottom: 12px;">
                 Transacciones válidas esperando ser incluidas en el próximo bloque por un minero.
             </div>
@@ -599,7 +656,7 @@
         </div>
 
         <div class="card" style="margin: 0; padding: 20px;">
-            <h2>Proceso de Minado</h2>
+            <h2>5. Proceso de Minado</h2>
             <label>Dirección del minero (Alias o Public Key)</label>
             <textarea id="miner_address" rows="2" placeholder="Pega aquí tu Alias o Public Key para recibir la recompensa..."></textarea>
             <div style="height:10px"></div>
@@ -627,7 +684,7 @@
     </div>
 
     <section class="card col-span-3">
-      <h2>Resumen Económico (Validado por la Cadena)</h2>
+      <h2>6. Resumen Económico (Validado por la Cadena)</h2>
       <div class="row">
         <div><div id="leadersTable"></div></div>
         <div><div id="balancesTable"></div></div>
@@ -635,7 +692,7 @@
     </section>
     
     <section class="card col-span-3">
-      <h2>Panel de Resultados / Log</h2>
+      <h2>7. Panel de Resultados / Log</h2>
       <div class="log" id="log"></div>
     </section>
 
@@ -652,7 +709,7 @@
         <div style="height:10px"></div>
 
         <label>Llave Privada del Fundador (Admin)</label>
-        <textarea id="faucet_private_key" rows="2" placeholder="Copiar de la consola del servidor..."></textarea>
+        <textarea id="faucet_private_key" rows="2" placeholder="Copiar de la consola del servidor..." autocomplete="off"></textarea>
         <div style="height:10px"></div>
         
         <button class="btn" id="btn_faucet_send">
@@ -661,7 +718,7 @@
     </section>
 
     <section class="card col-span-3">
-      <h2>Consultas de Cadena</h2>
+      <h2>8. Consultas de Cadena</h2>
       <div class="grid-4">
         <button class="btn" id="btnHealth">/HEALTH</button>
         <button class="btn" id="btnChain">/CHAIN</button>
@@ -672,8 +729,8 @@
     </section>
   </main>
 
-  <button class="scroll-to-top" aria-label="Scroll to top">↑</button>
-
-  <div class="footer">Blockchain Simulator con ECDSA y Proof of Work - Requiere Flask backend</div>
+  <div class="footer" style="text-align: center; color: var(--muted); font-size: 0.8em; padding: 20px;">
+    Blockchain Simulator con ECDSA y Proof of Work - Requiere Flask backend
+  </div>
 </body>
 </html>
