@@ -15,17 +15,17 @@
     const socket = io();
 
     socket.on('connect', () => {
-        console.log("✅ Conectado en Tiempo Real");
+        console.log("Conectado en Tiempo Real");
         setBadge(true, '(EN VIVO)');
     });
 
     socket.on('actualizacion_mempool', (data) => {
-        console.log("📩 Evento: " + data.msg);
+        console.log("Evento: " + data.msg);
         document.getElementById('btnShowMempool').click();
     });
 
     socket.on('bloque_minado', (data) => {
-        console.log(`⛏️ BLOQUE #${data.index} MINADO!`);
+        console.log(`BLOQUE #${data.index} MINADO!`);
       
         document.getElementById('btnBalances').click();
         document.getElementById('btnLeaders').click();
@@ -78,7 +78,7 @@
     const pubToAddress = (publicKeyHex) => {
         if (!publicKeyHex) return "";
         
-        if (publicKeyHex === 'SYSTEM') return '⚙️ SYSTEM';
+        if (publicKeyHex === 'SYSTEM') return 'SYSTEM';
         
         const alias = reverseAliasCache[publicKeyHex];
         
@@ -605,7 +605,6 @@
     <section class="card validation-card" id="validationCard">
       <h2>Verificación de Firma y Fondos</h2>
       <div class="muted">
-        El Nodo Central verifica la autenticidad (firma) y la disponibilidad de fondos antes de aceptar una transacción.
       </div>
       <div style="height:16px"></div>
 
@@ -627,7 +626,6 @@
         <div class="card" style="margin: 0; padding: 20px;">
             <h2>Mempool - Transacciones Pendientes</h2>
             <div class="muted" style="margin-bottom: 12px;">
-                Transacciones válidas esperando ser incluidas en el próximo bloque por un minero.
             </div>
             <button class="btn" id="btnShowMempool">VER MEMPOOL ACTUAL</button>
             <div style="margin-top: 15px;">
@@ -647,7 +645,6 @@
 
             <h3>Bloque Candidato (Resultado)</h3>
             <div class="muted">
-                Haz clic en MINAR para calcular el hash del siguiente bloque.
             </div>
             
             <div id="blockCandidateDisplay" class="block-display">
