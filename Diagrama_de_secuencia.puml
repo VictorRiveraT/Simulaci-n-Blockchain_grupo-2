@@ -1,20 +1,44 @@
 @startuml
 !theme vibrant
 skinparam sequenceMessageAlign center
-skinparam backgroundColor #1a1a2e
+skinparam backgroundColor #0a0e27
 skinparam roundcorner 15
 skinparam shadowing false
 
-' Colores personalizados
+' Colores personalizados mejorados para mejor legibilidad
 skinparam participant {
-    BackgroundColor #16213e
-    BorderColor #0f3460
-    FontColor #e4e4e4
-}
-skinparam actor {
-    BackgroundColor #533483
-    BorderColor #8e44ad
+    BackgroundColor #1e3a5f
+    BorderColor #4a90e2
     FontColor #ffffff
+    FontSize 12
+}
+
+skinparam actor {
+    BackgroundColor #6a1b9a
+    BorderColor #ab47bc
+    FontColor #ffffff
+    FontSize 12
+}
+
+skinparam sequence {
+    ArrowColor #64b5f6
+    ArrowFontColor #e3f2fd
+    ArrowFontSize 11
+    LifeLineBackgroundColor #1a237e
+    LifeLineBorderColor #5c6bc0
+}
+
+skinparam note {
+    BackgroundColor #2d4a6f
+    BorderColor #4fc3f7
+    FontColor #e1f5fe
+}
+
+skinparam divider {
+    BackgroundColor #1565c0
+    BorderColor #42a5f5
+    FontColor #ffffff
+    FontSize 13
 }
 
 title **Blockchain Simulator - Diagrama de Secuencia**\n//Sistema con ECDSA, PoW y Faucet//
