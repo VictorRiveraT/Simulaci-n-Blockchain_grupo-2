@@ -1,222 +1,399 @@
 # -*- coding: utf-8 -*-
-import sys
-import os
+import hashlib
+import json
+import sqlite3
 from time import time
-from flask import Flask, jsonify, request, render_template
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from uuid import uuid4
+from urllib.parse import urlparse
+from collections import OrderedDict
 
-# Importación de módulos locales para la lógica de blockchain y criptografía
-from blockchain import Blockchain, FOUNDER_PRIVATE_KEY, FOUNDER_ADDRESS
 from keys import Keys
 
 # ==========================================
-# CONFIGURACIÓN DE LA APLICACIÓN FLASK
+# CONFIGURACIÓN DE CREDENCIALES ADMINISTRATIVAS
 # ==========================================
-# Se definen las rutas para archivos estáticos y plantillas HTML
-app = Flask(__name__, 
-            static_folder='static',
-            static_url_path='/static',
-            template_folder='templates')
+# Llaves criptográficas fijas para el Fundador (Administrador).
+# Esto asegura la persistencia de fondos y credenciales a través de reinicios del servidor.
+FOUNDER_PRIVATE_KEY = "84a1dad2fa1c17c90d67c28a7f2dc49634ee15bf0e22c02ced1209cebbbb8d7d"
+FOUNDER_ADDRESS = "04ce3540cbdc33541362e8715c279fa62c941fc34f7385dbd7244eb00cbe8f4f57dc000441801ec521f0063c51fed1e95a20b4943f3ebcf3af4c5716f95e2235d9"
+MINING_REWARD = 10 # Recompensa otorgada por bloque minado
 
-app.config['SECRET_KEY'] = 'secreto_seguro_blockchain' # Clave requerida para la gestión de sesiones y websockets
-CORS(app) 
+print("*"*50)
+print(f"Llave PRIVADA Fundador (Admin): {FOUNDER_PRIVATE_KEY}")
+print(f"Direccion del Fundador (Genesis): {FOUNDER_ADDRESS}")
+print("*"*50)
 
-# Inicialización de SocketIO para habilitar la comunicación bidireccional en tiempo real
-socketio = SocketIO(app, cors_allowed_origins="*")
+DB_NAME = 'Blockchain.db'
 
-# Instancia de la Blockchain (gestiona la base de datos y la lógica de cadena)
-blockchain = Blockchain()
-
-# Registro de Alias: Mapeo de nombres legibles a direcciones públicas
-# Se inicializa con la dirección del fundador pre-cargada
-alias_registry = {
-    'FOUNDER': FOUNDER_ADDRESS
-}
-
-# ==========================================
-# RUTAS DEL SISTEMA
-# ==========================================
-
-@app.route('/health', methods=['GET'])
-def health_check():
+class Blockchain:
     """
-    Endpoint para verificar el estado del servicio.
-    Retorna el estado operativo y la dificultad actual de minado.
+    Clase principal que gestiona la estructura de datos de la blockchain,
+    la persistencia en base de datos SQLite y la lógica de consenso (PoW).
     """
-    return jsonify({"status": "OK", "message": "Simulador Activo", "difficulty": 4}), 200
 
-@app.route('/')
-def get_index():
-    """
-    Ruta principal que sirve la interfaz de usuario (SPA).
-    """
-    return render_template('index.html')
+    def __init__(self):
+        # Inicialización de la conexión a la base de datos y estructuras en memoria
+        self.conn = self._connect_db()
+        self._create_tables()
+        self._chain = []
+        self._current_transactions = [] 
+        self._nodes = set()
+        # Identificador único del nodo para la red
+        self.node_id = str(uuid4()).replace('-', '')
 
-# ==========================================
-# RUTAS TRANSACCIONALES
-# ==========================================
+        # Carga del estado inicial desde la persistencia
+        self._load_chain_from_db()
+        self._load_mempool_from_db()
 
-@app.route('/faucet', methods=['POST'])
-def faucet_funds():
-    """
-    Distribuye fondos desde la cuenta del Fundador a una dirección destino.
-    Requiere autenticación mediante la llave privada del administrador.
-    """
-    values = request.get_json()
-    if not values: return jsonify({'message': 'Error: Solicitud JSON inválida.'}), 400
+    # ==========================================
+    #      GESTIÓN DE PERSISTENCIA (SQLITE)
+    # ==========================================
     
-    recipient = values.get('recipient_address')
-    key = values.get('admin_private_key')
-    
-    if not recipient or not key: return jsonify({'message': 'Error: Faltan datos requeridos.'}), 400
-    
-    # Verificación simple de credenciales administrativas
-    if key != FOUNDER_PRIVATE_KEY: return jsonify({'message': 'Error: Llave privada inválida.'}), 401
+    def _connect_db(self):
+        """
+        Establece la conexión con la base de datos SQLite.
+        Configura el row_factory para acceder a columnas por nombre.
+        """
+        conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-    success, msg = blockchain.issue_faucet_funds(recipient)
-    if not success: return jsonify({'message': msg}), 500
+    def _create_tables(self):
+        """
+        Inicializa el esquema de base de datos si no existe.
+        Crea tablas para almacenar bloques confirmados y el mempool.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS blocks (
+                "index" INTEGER PRIMARY KEY,
+                block_data TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS mempool (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tx_data TEXT NOT NULL
+            )
+        ''')
+        self.conn.commit()
 
-    # Emisión de evento WebSocket: Notificar a los clientes para actualizar el mempool
-    socketio.emit('actualizacion_mempool', {'msg': 'Faucet utilizado'})
-    
-    return jsonify({'message': 'Exito: ' + str(msg)}), 200
-
-@app.route('/register_alias', methods=['POST'])
-def register_alias():
-    """
-    Registra un alias legible para una clave pública específica.
-    """
-    values = request.get_json()
-    alias = values.get('alias')
-    pub = values.get('public_key')
-    if not alias or not pub: return jsonify({'message': 'Error: Faltan datos requeridos.'}), 400
-    
-    alias_registry[alias] = pub
-    return jsonify({'message': 'Alias registrado correctamente.'}), 201
-
-@app.route('/aliases', methods=['GET'])
-def get_aliases():
-    """
-    Retorna el registro completo de alias para su resolución en el frontend.
-    """
-    return jsonify(alias_registry), 200
-
-@app.route('/transactions/verify_only', methods=['POST'])
-def verify_transaction_only():
-    """
-    Verifica la validez de una transacción (firma y fondos) sin procesarla.
-    Utilizado por el nodo para validación previa.
-    """
-    v = request.get_json()
-    try: amt = int(v['amount'])
-    except: return jsonify({'valid': False, 'error': 'Error: Monto inválido.'}), 400
+    def _load_chain_from_db(self):
+        """
+        Recupera la cadena de bloques completa desde la base de datos.
+        Si la base de datos está vacía, inicializa el Bloque Génesis.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT block_data FROM blocks ORDER BY "index" ASC')
+        rows = cursor.fetchall()
         
-    success, msg = blockchain.verify_transaction(v['sender_pub'], v['recipient'], amt, v['signature'])
-    if not success: return jsonify({'valid': False, 'error': msg}), 400
-    return jsonify({'valid': True, 'message': msg}), 200
+        if not rows:
+            print("Base de datos vacia. Inicializando Bloque Genesis...")
+            self._new_block(previous_hash='0' * 64, nonce=0, genesis=True)
+        else:
+            print(f"Cargando {len(rows)} bloques desde la base de datos...")
+            self._chain = [json.loads(row['block_data']) for row in rows]
 
-@app.route('/transactions/new', methods=['POST'])
-def new_transaction():
-    """
-    Crea una nueva transacción y la añade al Mempool.
-    Emite un evento WebSocket para actualizar la interfaz de los clientes conectados.
-    """
-    v = request.get_json()
-    try: amt = int(v['amount'])
-    except: return jsonify({'message': 'Error: Monto inválido.'}), 400
+    def _load_mempool_from_db(self):
+        """
+        Recupera las transacciones pendientes (Mempool) desde la base de datos.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT tx_data FROM mempool")
+        rows = cursor.fetchall()
+        self._current_transactions = [json.loads(row['tx_data']) for row in rows]
+
+    # ==========================================
+    #        LÓGICA CORE DE BLOCKCHAIN
+    # ==========================================
+
+    @staticmethod
+    def _stable_hash_payload(payload: dict) -> str:
+        """
+        Genera un hash SHA-256 determinista de un diccionario.
+        Ordena las claves para garantizar consistencia en la firma digital.
+        """
+        sorted_payload = OrderedDict(sorted(payload.items()))
+        payload_string = json.dumps(sorted_payload, separators=(',', ':')).encode()
+        return hashlib.sha256(payload_string).hexdigest()
+
+    def _build_block_struct(self, index, timestamp, transactions, nonce, previous_hash):
+        """
+        Método auxiliar para estandarizar la estructura de datos del bloque.
+        Garantiza que el objeto bloque sea idéntico durante el minado y el guardado.
+        """
+        return {
+            'index': index,
+            'timestamp': timestamp,
+            'transactions': transactions,
+            'nonce': nonce,
+            'previous_hash': previous_hash,
+        }
+
+    def _new_block(self, previous_hash: str, nonce: int, genesis: bool = False, current_time: float = None):
+        """
+        Crea un nuevo bloque, lo añade a la cadena y persiste el estado en la BD.
+        """
+        # 1. Construcción de transacciones del bloque
+        transactions_in_block = []
         
-    success, msg = blockchain.new_transaction(v['sender_pub'], v['recipient'], amt, v['signature'])
-    if not success: return jsonify({'message': msg}), 400
+        if genesis:
+            # Transacción especial de emisión inicial para el Bloque Génesis
+            transactions_in_block.append({
+                'sender': "SYSTEM", 
+                'recipient': FOUNDER_ADDRESS, 
+                'amount': 5000, 
+                'signature': "SYSTEM_SIGNATURE"
+            })
+        else:
+            # Transacción Coinbase (Recompensa de minado)
+            transactions_in_block.append({
+                'sender': "SYSTEM", 
+                'recipient': self.node_id,
+                'amount': MINING_REWARD, 
+                'signature': "SYSTEM_SIGNATURE"
+            })
+            # Inclusión de transacciones del Mempool
+            transactions_in_block.extend(self._current_transactions)
 
-    # Emisión de evento WebSocket: Notificar nueva transacción pendiente
-    socketio.emit('actualizacion_mempool', {'msg': 'Nueva transacción pendiente'})
+        # 2. Ensamblaje del bloque
+        block = self._build_block_struct(
+            index=len(self._chain) + 1,
+            timestamp=current_time or time(),
+            transactions=transactions_in_block,
+            nonce=nonce,
+            previous_hash=previous_hash or self._hash(self.last_block)
+        )
 
-    return jsonify({'message': msg}), 201
+        # 3. Persistencia atómica (Transacción BD)
+        block_string = json.dumps(block, sort_keys=True)
+        cursor = self.conn.cursor()
+        try:
+            # Insertar bloque
+            cursor.execute('INSERT INTO blocks ("index", block_data) VALUES (?, ?)',
+                           (block['index'], block_string))
+            
+            # Limpiar mempool si no es génesis
+            if not genesis:
+                cursor.execute("DELETE FROM mempool")
+            
+            self.conn.commit()
+            
+            # 4. Actualización del estado en memoria
+            self._current_transactions = []
+            self._chain.append(block)
+            return block
+            
+        except sqlite3.IntegrityError:
+            print("Error de integridad: El bloque ya existe en la BD.")
+            return None
 
-@app.route('/mine', methods=['POST'])
-def mine():
-    """
-    Ejecuta el algoritmo de Prueba de Trabajo (PoW) para minar un nuevo bloque.
-    Sincroniza el tiempo de minado y creación del bloque para asegurar la consistencia del hash.
-    """
-    v = request.get_json()
-    miner = v.get('miner_address')
-    if not miner: return jsonify({'message': 'Error: Se requiere dirección del minero.'}), 400
+    def new_transaction(self, sender_pub: str, recipient: str, amount: int, signature: str) -> tuple[bool, str]:
+        """
+        Crea una nueva transacción, la valida y la añade al Mempool.
+        """
+        is_valid, message = self.verify_transaction(sender_pub, recipient, amount, signature)
+        
+        if not is_valid:
+            return False, message
+        
+        # Estructura de la transacción con timestamp de recepción
+        tx_payload = {
+            'sender': sender_pub, 
+            'recipient': recipient,
+            'amount': amount, 
+            'signature': signature,
+            'timestamp': time()
+        }
+        
+        # Persistencia en la tabla mempool
+        tx_string = json.dumps(tx_payload)
+        cursor = self.conn.cursor()
+        cursor.execute("INSERT INTO mempool (tx_data) VALUES (?)", (tx_string,))
+        self.conn.commit()
 
-    blockchain.node_id = miner
-    last_block = blockchain.last_block
+        self._current_transactions.append(tx_payload)
+        return True, "Transaccion verificada y anadida al Mempool."
     
-    # Captura del tiempo actual para asegurar consistencia entre el cálculo del nonce y el bloque final
-    timestamp_fijo = time()
+    def proof_of_work(self, last_block: dict, current_time: float = None) -> int:
+        """
+        Algoritmo de Consenso (PoW): Encuentra un número 'nonce' tal que el hash del bloque
+        comience con 4 ceros.
+        """
+        nonce = 0
+        
+        # Reconstrucción exacta del bloque candidato para el cálculo del hash
+        transactions_in_block = []
+        transactions_in_block.append({
+            'sender': "SYSTEM", 
+            'recipient': self.node_id,
+            'amount': MINING_REWARD, 
+            'signature': "SYSTEM_SIGNATURE"
+        })
+        transactions_in_block.extend(self._current_transactions)
+        
+        previous_hash = self._hash(last_block)
+        
+        # Bucle de fuerza bruta
+        while True:
+            guess_block = self._build_block_struct(
+                index=len(self._chain) + 1,
+                timestamp=current_time or time(),
+                transactions=transactions_in_block,
+                nonce=nonce,
+                previous_hash=previous_hash
+            )
+
+            guess_hash = self._hash(guess_block)
+            
+            # Verificación de dificultad (4 ceros iniciales)
+            if guess_hash[:4] == "0000":
+                return nonce
+            
+            nonce += 1
     
-    # Ejecución de PoW con tiempo congelado
-    nonce = blockchain.proof_of_work(last_block, current_time=timestamp_fijo)
+    # ==========================================
+    #        MÉTODOS AUXILIARES Y DE LECTURA
+    # ==========================================
+
+    @staticmethod
+    def _hash(block: dict) -> str:
+        """
+        Genera el hash SHA-256 de un bloque.
+        """
+        block_string = json.dumps(block, sort_keys=True).encode()
+        return hashlib.sha256(block_string).hexdigest()
+
+    def verify_transaction(self, sender_pub: str, recipient: str, amount: int, signature: str) -> tuple[bool, str]:
+        """
+        Verifica la validez criptográfica y financiera de una transacción.
+        """
+        current_balance = self.get_balance(sender_pub)
+        if current_balance < amount:
+            return False, f"Fondos insuficientes. Saldo actual: {current_balance}."
+
+        # El payload para firmar NO incluye timestamp, solo datos críticos
+        payload = {
+            'amount': amount, 
+            'recipient': recipient, 
+            'sender': sender_pub
+        }
+        message_hash_hex = self._stable_hash_payload(payload)
+        
+        if not Keys.verify_signature(sender_pub, signature, message_hash_hex):
+            return False, "Verificacion de firma fallida. Firma invalida."
+
+        return True, "Transaccion valida."
+
+    def get_balance(self, public_key_address: str) -> int:
+        """
+        Calcula el saldo de una dirección recorriendo todo el historial de transacciones (UTXO simplificado).
+        """
+        balance = 0
+        # Recorrido de bloques confirmados
+        for block in self._chain:
+            for tx in block['transactions']:
+                if tx['recipient'] == public_key_address:
+                    balance += int(tx['amount'])
+                if tx['sender'] == public_key_address:
+                    balance -= int(tx['amount'])
+        
+        # Recorrido de transacciones pendientes (Mempool) para saldo en tiempo real
+        for tx in self._current_transactions:
+            if tx['sender'] == public_key_address:
+                balance -= int(tx['amount'])
+        return balance
+
+    def issue_faucet_funds(self, recipient_address: str, amount: int = 100) -> tuple[bool, str]:
+        """
+        Genera una transacción especial firmada por el Fundador para distribuir fondos.
+        """
+        founder_balance = self.get_balance(FOUNDER_ADDRESS)
+        if founder_balance < amount:
+            return False, "El Faucet no tiene fondos suficientes."
+
+        payload = {'amount': amount, 'recipient': recipient_address, 'sender': FOUNDER_ADDRESS}
+        message_hash_hex = self._stable_hash_payload(payload)
+        signature = Keys.sign_digest(FOUNDER_PRIVATE_KEY, message_hash_hex)
+        
+        if not signature:
+            return False, "Error critico en la firma del Faucet."
+
+        return self.new_transaction(
+            sender_pub=FOUNDER_ADDRESS,
+            recipient=recipient_address,
+            amount=amount,
+            signature=signature
+        )
+
+    def get_all_balances(self) -> dict:
+        """
+        Retorna un diccionario con los saldos de todas las direcciones conocidas.
+        """
+        all_addresses = set()
+        for block in self.chain:
+            for tx in block['transactions']:
+                if tx['sender'] != "SYSTEM":
+                    all_addresses.add(tx['sender'])
+                all_addresses.add(tx['recipient'])
+        
+        balances = {}
+        for address in all_addresses:
+            balances[address] = self.get_balance(address)
+        return balances
+
+    def get_leaders(self) -> dict:
+        """
+        Calcula el ranking de mineros basado en las recompensas acumuladas.
+        """
+        leaders = {}
+        for block in self.chain:
+            for tx in block['transactions']:
+                # Filtra transacciones tipo Coinbase
+                if tx['sender'] == "SYSTEM" and tx['recipient'] != FOUNDER_ADDRESS:
+                    miner = tx['recipient']
+                    amount = int(tx['amount'])
+                    leaders[miner] = leaders.get(miner, 0) + amount
+        return leaders
+
+    def is_chain_valid(self) -> bool:
+        """
+        Verifica la integridad completa de la cadena de bloques.
+        Comprueba enlaces de hash y pruebas de trabajo.
+        """
+        last_block = self._chain[0]
+        current_index = 1
+        while current_index < len(self._chain):
+            block = self._chain[current_index]
+            
+            # Verificar enlace criptográfico (hash del bloque anterior)
+            if block['previous_hash'] != self._hash(last_block):
+                return False
+            
+            # Verificar prueba de trabajo
+            if not self._valid_proof(self._hash(last_block), block['nonce']):
+                return False
+            
+            last_block = block
+            current_index += 1
+        return True
+
+    @staticmethod
+    def _valid_proof(last_hash: str, nonce: int, difficulty: int = 4) -> bool:
+        """
+        Valida si un nonce cumple con la dificultad objetivo.
+        """
+        guess = f'{last_hash}{nonce}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:difficulty] == "0" * difficulty
     
-    # Creación y persistencia del bloque con el nonce encontrado
-    block = blockchain._new_block(
-        previous_hash=blockchain._hash(last_block), 
-        nonce=nonce, 
-        current_time=timestamp_fijo
-    )
-
-    # Construcción de la respuesta con detalles técnicos para el frontend
-    response = {
-        'message': "Nuevo bloque minado exitosamente.",
-        'index': block['index'],
-        'nonce': block['nonce'],
-        'previous_hash': block['previous_hash'],
-        'transactions': block['transactions'],
-        'hash': blockchain._hash(block)
-    }
-    
-    # Emisión de evento WebSocket: Notificar a todos los nodos sobre el nuevo bloque
-    socketio.emit('bloque_minado', {'index': block['index'], 'miner': miner})
-    
-    return jsonify(response), 200
-
-# ==========================================
-# RUTAS DE CONSULTA E INFORMACIÓN
-# ==========================================
-
-@app.route('/chain', methods=['GET'])
-def full_chain(): 
-    """ Retorna la cadena de bloques completa y su longitud. """
-    return jsonify({'chain': blockchain.chain, 'length': len(blockchain.chain)}), 200
-
-@app.route('/mempool', methods=['GET'])
-def get_mempool(): 
-    """ Retorna las transacciones pendientes en el Mempool. """
-    return jsonify(blockchain.mempool), 200
-
-@app.route('/balances', methods=['GET'])
-def get_all_balances(): 
-    """ Retorna el estado actual de cuentas (UTXO abstraído). """
-    return jsonify(blockchain.get_all_balances()), 200
-
-@app.route('/leaders', methods=['GET'])
-def get_leaders(): 
-    """ Retorna la tabla de clasificación de mineros por recompensas obtenidas. """
-    return jsonify(blockchain.get_leaders()), 200
-
-@app.route('/validate', methods=['GET'])
-def validate_chain():
-    """ Verifica la integridad criptográfica de toda la cadena. """
-    valid = blockchain.is_chain_valid()
-    return jsonify({'valid': valid, 'message': 'Cadena válida' if valid else 'Cadena inválida'}), 200 if valid else 500
-
-# ==========================================
-# PUNTO DE ENTRADA
-# ==========================================
-
-if __name__ == '__main__':
-    # Configuración del puerto basada en variables de entorno
-    port = int(os.environ.get('PORT', 5000))
-    print("="*50)
-    print(f"Iniciando Servidor Blockchain con soporte WebSockets")
-    print(f"Puerto de escucha: {port}")
-    print(f"URL Local: http://127.0.0.1:{port}")
-    print("="*50)
-    
-    # Ejecución del servidor utilizando SocketIO
-    socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
+    # Propiedades para acceso de solo lectura
+    @property
+    def last_block(self) -> dict:
+        return self._chain[-1]
+    @property
+    def chain(self) -> list:
+        return list(self._chain)
+    @property
+    def mempool(self) -> list:
+        return list(self._current_transactions)
