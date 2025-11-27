@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import hashlib
 import json
 import sqlite3
@@ -9,14 +8,9 @@ from collections import OrderedDict
 
 from keys import Keys
 
-# ==========================================
-# CONFIGURACIÓN DE CREDENCIALES ADMINISTRATIVAS
-# ==========================================
-# Llaves criptográficas fijas para el Fundador (Administrador).
-# Esto asegura la persistencia de fondos y credenciales a través de reinicios del servidor.
 FOUNDER_PRIVATE_KEY = "84a1dad2fa1c17c90d67c28a7f2dc49634ee15bf0e22c02ced1209cebbbb8d7d"
 FOUNDER_ADDRESS = "04ce3540cbdc33541362e8715c279fa62c941fc34f7385dbd7244eb00cbe8f4f57dc000441801ec521f0063c51fed1e95a20b4943f3ebcf3af4c5716f95e2235d9"
-MINING_REWARD = 10 # Recompensa otorgada por bloque minado
+MINING_REWARD = 10
 
 print("*"*50)
 print(f"Llave PRIVADA Fundador (Admin): {FOUNDER_PRIVATE_KEY}")
@@ -32,23 +26,16 @@ class Blockchain:
     """
 
     def __init__(self):
-        # Inicialización de la conexión a la base de datos y estructuras en memoria
         self.conn = self._connect_db()
         self._create_tables()
         self._chain = []
         self._current_transactions = [] 
         self._nodes = set()
-        # Identificador único del nodo para la red
         self.node_id = str(uuid4()).replace('-', '')
 
-        # Carga del estado inicial desde la persistencia
         self._load_chain_from_db()
         self._load_mempool_from_db()
 
-    # ==========================================
-    #      GESTIÓN DE PERSISTENCIA (SQLITE)
-    # ==========================================
-    
     def _connect_db(self):
         """
         Establece la conexión con la base de datos SQLite.
@@ -103,10 +90,6 @@ class Blockchain:
         rows = cursor.fetchall()
         self._current_transactions = [json.loads(row['tx_data']) for row in rows]
 
-    # ==========================================
-    #        LÓGICA CORE DE BLOCKCHAIN
-    # ==========================================
-
     @staticmethod
     def _stable_hash_payload(payload: dict) -> str:
         """
@@ -134,11 +117,9 @@ class Blockchain:
         """
         Crea un nuevo bloque, lo añade a la cadena y persiste el estado en la BD.
         """
-        # 1. Construcción de transacciones del bloque
         transactions_in_block = []
         
         if genesis:
-            # Transacción especial de emisión inicial para el Bloque Génesis
             transactions_in_block.append({
                 'sender': "SYSTEM", 
                 'recipient': FOUNDER_ADDRESS, 
@@ -146,17 +127,14 @@ class Blockchain:
                 'signature': "SYSTEM_SIGNATURE"
             })
         else:
-            # Transacción Coinbase (Recompensa de minado)
             transactions_in_block.append({
                 'sender': "SYSTEM", 
                 'recipient': self.node_id,
                 'amount': MINING_REWARD, 
                 'signature': "SYSTEM_SIGNATURE"
             })
-            # Inclusión de transacciones del Mempool
             transactions_in_block.extend(self._current_transactions)
 
-        # 2. Ensamblaje del bloque
         block = self._build_block_struct(
             index=len(self._chain) + 1,
             timestamp=current_time or time(),
@@ -165,21 +143,17 @@ class Blockchain:
             previous_hash=previous_hash or self._hash(self.last_block)
         )
 
-        # 3. Persistencia atómica (Transacción BD)
         block_string = json.dumps(block, sort_keys=True)
         cursor = self.conn.cursor()
         try:
-            # Insertar bloque
             cursor.execute('INSERT INTO blocks ("index", block_data) VALUES (?, ?)',
                            (block['index'], block_string))
             
-            # Limpiar mempool si no es génesis
             if not genesis:
                 cursor.execute("DELETE FROM mempool")
             
             self.conn.commit()
             
-            # 4. Actualización del estado en memoria
             self._current_transactions = []
             self._chain.append(block)
             return block
@@ -197,7 +171,6 @@ class Blockchain:
         if not is_valid:
             return False, message
         
-        # Estructura de la transacción con timestamp de recepción
         tx_payload = {
             'sender': sender_pub, 
             'recipient': recipient,
@@ -206,7 +179,6 @@ class Blockchain:
             'timestamp': time()
         }
         
-        # Persistencia en la tabla mempool
         tx_string = json.dumps(tx_payload)
         cursor = self.conn.cursor()
         cursor.execute("INSERT INTO mempool (tx_data) VALUES (?)", (tx_string,))
@@ -222,7 +194,6 @@ class Blockchain:
         """
         nonce = 0
         
-        # Reconstrucción exacta del bloque candidato para el cálculo del hash
         transactions_in_block = []
         transactions_in_block.append({
             'sender': "SYSTEM", 
@@ -234,7 +205,6 @@ class Blockchain:
         
         previous_hash = self._hash(last_block)
         
-        # Bucle de fuerza bruta
         while True:
             guess_block = self._build_block_struct(
                 index=len(self._chain) + 1,
@@ -246,16 +216,11 @@ class Blockchain:
 
             guess_hash = self._hash(guess_block)
             
-            # Verificación de dificultad (4 ceros iniciales)
             if guess_hash[:4] == "0000":
                 return nonce
             
             nonce += 1
     
-    # ==========================================
-    #        MÉTODOS AUXILIARES Y DE LECTURA
-    # ==========================================
-
     @staticmethod
     def _hash(block: dict) -> str:
         """
@@ -272,7 +237,6 @@ class Blockchain:
         if current_balance < amount:
             return False, f"Fondos insuficientes. Saldo actual: {current_balance}."
 
-        # El payload para firmar NO incluye timestamp, solo datos críticos
         payload = {
             'amount': amount, 
             'recipient': recipient, 
@@ -290,7 +254,6 @@ class Blockchain:
         Calcula el saldo de una dirección recorriendo todo el historial de transacciones (UTXO simplificado).
         """
         balance = 0
-        # Recorrido de bloques confirmados
         for block in self._chain:
             for tx in block['transactions']:
                 if tx['recipient'] == public_key_address:
@@ -298,7 +261,6 @@ class Blockchain:
                 if tx['sender'] == public_key_address:
                     balance -= int(tx['amount'])
         
-        # Recorrido de transacciones pendientes (Mempool) para saldo en tiempo real
         for tx in self._current_transactions:
             if tx['sender'] == public_key_address:
                 balance -= int(tx['amount'])
@@ -349,7 +311,6 @@ class Blockchain:
         leaders = {}
         for block in self.chain:
             for tx in block['transactions']:
-                # Filtra transacciones tipo Coinbase
                 if tx['sender'] == "SYSTEM" and tx['recipient'] != FOUNDER_ADDRESS:
                     miner = tx['recipient']
                     amount = int(tx['amount'])
@@ -366,11 +327,9 @@ class Blockchain:
         while current_index < len(self._chain):
             block = self._chain[current_index]
             
-            # Verificar enlace criptográfico (hash del bloque anterior)
             if block['previous_hash'] != self._hash(last_block):
                 return False
             
-            # Verificar prueba de trabajo
             if not self._valid_proof(self._hash(last_block), block['nonce']):
                 return False
             
@@ -387,7 +346,6 @@ class Blockchain:
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:difficulty] == "0" * difficulty
     
-    # Propiedades para acceso de solo lectura
     @property
     def last_block(self) -> dict:
         return self._chain[-1]
