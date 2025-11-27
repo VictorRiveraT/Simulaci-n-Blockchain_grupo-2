@@ -12,31 +12,37 @@
     const EC = elliptic.ec;
     const ec = new EC('secp256k1');
 
+    // --- INICIO CÓDIGO WEBSOCKETS ---
     const socket = io();
 
     socket.on('connect', () => {
-        console.log("Conectado en Tiempo Real");
+        console.log("✅ Conectado en Tiempo Real");
         setBadge(true, '(EN VIVO)');
     });
 
+    // Cuando llega una nueva transacción, actualizamos la tabla mempool
     socket.on('actualizacion_mempool', (data) => {
-        console.log("Evento: " + data.msg);
+        console.log("📩 Evento: " + data.msg);
         document.getElementById('btnShowMempool').click();
     });
 
+    // Cuando se mina un bloque, actualizamos TODO
     socket.on('bloque_minado', (data) => {
-        console.log(`BLOQUE #${data.index} MINADO!`);
+        console.log(`⛏️ BLOQUE #${data.index} MINADO!`);
+        // Simulamos clics para refrescar la pantalla
         document.getElementById('btnBalances').click();
         document.getElementById('btnLeaders').click();
         document.getElementById('btnChain').click();
         document.getElementById('btnShowMempool').click();
         
+        // Efecto visual en el badge
         const b = document.getElementById('statusBadge');
         b.textContent = `¡NUEVO BLOQUE #${data.index}!`;
         b.style.backgroundColor = '#10b981';
         b.style.color = 'black';
         setTimeout(() => setBadge(true, '(EN VIVO)'), 3000);
     });
+    // --- FIN CÓDIGO WEBSOCKETS ---
 
     let aliasCache = {}; 
     let reverseAliasCache = {}; 
@@ -77,20 +83,27 @@
     const pubToAddress = (publicKeyHex) => {
         if (!publicKeyHex) return "";
         
+        // Casos especiales del sistema
         if (publicKeyHex === 'SYSTEM') return '⚙️ SYSTEM';
         
+        // 1. Buscar si tiene Alias
         const alias = reverseAliasCache[publicKeyHex];
         
+        // 2. Recortar la llave (Primeros 8..Últimos 6)
         const shortKey = publicKeyHex.substring(0, 10) + '...' + publicKeyHex.substring(publicKeyHex.length - 6);
 
+        // 3. LÓGICA VISUAL:
         if (alias) {
+            // Si es el Founder
             if (alias.includes("FOUNDER")) {
                 return `<span style="color:#fcd34d; font-weight:bold;">${alias}</span> <code style="opacity:0.7; font-size:0.9em">(${shortKey})</code>`;
             }
             
+            // Usuario normal: Muestra "Alias (Llave...)"
             return `<span style="color:#4ade80; font-weight:bold;">${alias}</span> <code style="opacity:0.7; font-size:0.9em">(${shortKey})</code>`;
         }
         
+        // Si no tiene alias, solo muestra la llave
         return `<code style="opacity:0.8">${shortKey}</code>`;
     };
 
@@ -557,7 +570,7 @@
         <div class="subtitle">Sistema descentralizado con ECDSA y Proof of Work</div>
       </div>
       <button class="theme-toggle" aria-label="Toggle theme">
-        <div class="theme-toggle-slider"></div>
+        <div class="theme-toggle-slider">🌙</div>
       </button>
     </div>
   </header>
@@ -680,6 +693,8 @@
     <section class="card col-span-3 faucet-card">
         <h2>Faucet del Fundador (Admin)</h2>
         <div class="muted">
+          Aquí el Fundador puede "empujar" fondos a cualquier usuario.
+          (Necesitas la Llave Privada del Fundador que se muestra en la consola del servidor).
         </div>
         <div style="height:16px"></div>
   
@@ -687,8 +702,9 @@
         <input id="faucet_recipient" placeholder="Ej: victor (o la llave 04...)" />
         <div style="height:10px"></div>
 
+        <!-- Llave Privada del Fundador -->
         <label>Llave Privada del Fundador (Admin)</label>
-        <textarea id="faucet_private_key" rows="2" placeholder="..." autocomplete="off"></textarea>
+        <textarea id="faucet_private_key" rows="2" readonly style="opacity: 0.7;">84a1dad2fa1c17c90d67c28a7f2dc49634ee15bf0e22c02ced1209cebbbb8d7d</textarea>
         <div style="height:10px"></div>
         
         <button class="btn" id="btn_faucet_send">
