@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import sys
 import os
 from time import time
@@ -6,37 +5,24 @@ from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
-# Importación de módulos locales para la lógica de blockchain y criptografía
 from blockchain import Blockchain, FOUNDER_PRIVATE_KEY, FOUNDER_ADDRESS
 from keys import Keys
 
-# ==========================================
-# CONFIGURACIÓN DE LA APLICACIÓN FLASK
-# ==========================================
-# Se definen las rutas para archivos estáticos y plantillas HTML
 app = Flask(__name__, 
             static_folder='static',
             static_url_path='/static',
             template_folder='templates')
 
-app.config['SECRET_KEY'] = 'secreto_seguro_blockchain' # Clave requerida para la gestión de sesiones y websockets
+app.config['SECRET_KEY'] = 'secreto_seguro_blockchain' 
 CORS(app) 
 
-# Inicialización de SocketIO para habilitar la comunicación bidireccional en tiempo real
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Instancia de la Blockchain (gestiona la base de datos y la lógica de cadena)
 blockchain = Blockchain()
 
-# Registro de Alias: Mapeo de nombres legibles a direcciones públicas
-# Se inicializa con la dirección del fundador pre-cargada
 alias_registry = {
     'FOUNDER': FOUNDER_ADDRESS
 }
-
-# ==========================================
-# RUTAS DEL SISTEMA
-# ==========================================
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -53,9 +39,6 @@ def get_index():
     """
     return render_template('index.html')
 
-# ==========================================
-# RUTAS TRANSACCIONALES
-# ==========================================
 
 @app.route('/faucet', methods=['POST'])
 def faucet_funds():
@@ -71,13 +54,11 @@ def faucet_funds():
     
     if not recipient or not key: return jsonify({'message': 'Error: Faltan datos requeridos.'}), 400
     
-    # Verificación simple de credenciales administrativas
     if key != FOUNDER_PRIVATE_KEY: return jsonify({'message': 'Error: Llave privada inválida.'}), 401
 
     success, msg = blockchain.issue_faucet_funds(recipient)
     if not success: return jsonify({'message': msg}), 500
 
-    # Emisión de evento WebSocket: Notificar a los clientes para actualizar el mempool
     socketio.emit('actualizacion_mempool', {'msg': 'Faucet utilizado'})
     
     return jsonify({'message': 'Exito: ' + str(msg)}), 200
@@ -129,7 +110,6 @@ def new_transaction():
     success, msg = blockchain.new_transaction(v['sender_pub'], v['recipient'], amt, v['signature'])
     if not success: return jsonify({'message': msg}), 400
 
-    # Emisión de evento WebSocket: Notificar nueva transacción pendiente
     socketio.emit('actualizacion_mempool', {'msg': 'Nueva transacción pendiente'})
 
     return jsonify({'message': msg}), 201
@@ -147,20 +127,16 @@ def mine():
     blockchain.node_id = miner
     last_block = blockchain.last_block
     
-    # Captura del tiempo actual para asegurar consistencia entre el cálculo del nonce y el bloque final
     timestamp_fijo = time()
     
-    # Ejecución de PoW con tiempo congelado
     nonce = blockchain.proof_of_work(last_block, current_time=timestamp_fijo)
     
-    # Creación y persistencia del bloque con el nonce encontrado
     block = blockchain._new_block(
         previous_hash=blockchain._hash(last_block), 
         nonce=nonce, 
         current_time=timestamp_fijo
     )
 
-    # Construcción de la respuesta con detalles técnicos para el frontend
     response = {
         'message': "Nuevo bloque minado exitosamente.",
         'index': block['index'],
@@ -170,14 +146,9 @@ def mine():
         'hash': blockchain._hash(block)
     }
     
-    # Emisión de evento WebSocket: Notificar a todos los nodos sobre el nuevo bloque
     socketio.emit('bloque_minado', {'index': block['index'], 'miner': miner})
     
     return jsonify(response), 200
-
-# ==========================================
-# RUTAS DE CONSULTA E INFORMACIÓN
-# ==========================================
 
 @app.route('/chain', methods=['GET'])
 def full_chain(): 
@@ -205,12 +176,7 @@ def validate_chain():
     valid = blockchain.is_chain_valid()
     return jsonify({'valid': valid, 'message': 'Cadena válida' if valid else 'Cadena inválida'}), 200 if valid else 500
 
-# ==========================================
-# PUNTO DE ENTRADA
-# ==========================================
-
 if __name__ == '__main__':
-    # Configuración del puerto basada en variables de entorno
     port = int(os.environ.get('PORT', 5000))
     print("="*50)
     print(f"Iniciando Servidor Blockchain con soporte WebSockets")
@@ -218,5 +184,4 @@ if __name__ == '__main__':
     print(f"URL Local: http://127.0.0.1:{port}")
     print("="*50)
     
-    # Ejecución del servidor utilizando SocketIO
     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
