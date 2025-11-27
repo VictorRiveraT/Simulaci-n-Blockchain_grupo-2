@@ -16,13 +16,13 @@
     const socket = io();
 
     socket.on('connect', () => {
-        console.log("✅ Conectado en Tiempo Real");
+        console.log("Conectado en Tiempo Real");
         setBadge(true, '(EN VIVO)');
     });
 
     // Cuando llega una nueva transacción, actualizamos la tabla mempool
     socket.on('actualizacion_mempool', (data) => {
-        console.log("📩 Evento: " + data.msg);
+        console.log("Evento: " + data.msg);
         document.getElementById('btnShowMempool').click();
     });
 
