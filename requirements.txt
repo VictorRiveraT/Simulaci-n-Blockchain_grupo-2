@@ -1,5 +1,6 @@
 Flask
-Flask-Cors
-Flask-SocketIO
+flask-cors
+flask-socketio
 ecdsa
 gunicorn
+eventlet
