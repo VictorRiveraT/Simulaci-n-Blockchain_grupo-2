@@ -207,12 +207,11 @@ class Blockchain:
             nonce += 1
         return nonce
 
+    # Reemplaza la función _valid_proof en blockchain.py
+    
     @staticmethod
-    def _valid_proof(block_string_base: str, nonce: int, difficulty: int = 4) -> bool:
-        """
-        Valida la Prueba: ¿El hash(block_string_base + nonce) contiene {difficulty} ceros?
-        """
-        guess = f'{block_string_base}{nonce}'.encode()
+    def _valid_proof(last_hash: str, nonce: int, difficulty: int = 4) -> bool:
+        guess = f'{last_hash}{nonce}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:difficulty] == "0" * difficulty
 
