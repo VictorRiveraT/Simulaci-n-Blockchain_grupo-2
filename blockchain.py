@@ -32,14 +32,16 @@ class Blockchain:
     la persistencia en base de datos SQLite y la lógica de consenso (PoW).
     """
 
-    def __init__(self):
-        self.conn = self._connect_db()
+    def __init__(self, difficulty=4):
         self._create_tables()
         self._chain = []
         self._current_transactions = [] 
         self._nodes = set()
         self.node_id = str(uuid4()).replace('-', '')
 
+        self.difficulty = difficulty
+        self.new_block(proof=100, previous_hash=1)
+        
         self._load_chain_from_db()
         self._load_mempool_from_db()
 
