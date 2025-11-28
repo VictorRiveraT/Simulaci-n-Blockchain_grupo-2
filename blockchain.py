@@ -19,6 +19,13 @@ print("*"*50)
 
 DB_NAME = 'Blockchain.db'
 
+# Colócalo al inicio de tu archivo blockchain.py
+class InvalidTransactionError(Exception):
+    """Excepción personalizada para transacciones inválidas."""
+    pass
+
+# ... el resto de tu código de la clase Blockchain
+
 class Blockchain:
     """
     Clase principal que gestiona la estructura de datos de la blockchain,
