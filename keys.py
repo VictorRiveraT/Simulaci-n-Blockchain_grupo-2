@@ -1,8 +1,11 @@
+# -*- coding: utf-8 -*-
 import ecdsa
 import ecdsa.util
 import hashlib
 import binascii
 
+# Configuración de la curva elíptica y el algoritmo de hash
+# Se utiliza la curva SECP256k1 (la misma que Bitcoin) y SHA-256
 CURVE = ecdsa.SECP256k1
 HASH_ALGORITHM = hashlib.sha256
 
@@ -24,6 +27,7 @@ class Keys:
         private_key = ecdsa.SigningKey.generate(curve=CURVE)
         public_key = private_key.get_verifying_key()
         
+        # Conversión de las claves a formato hexadecimal para su fácil manejo y almacenamiento
         private_key_hex = binascii.hexlify(private_key.to_string()).decode('utf-8')
         public_key_hex = binascii.hexlify(public_key.to_string()).decode('utf-8')
         
@@ -46,6 +50,7 @@ class Keys:
         private_key = ecdsa.SigningKey.from_string(private_key_bytes, curve=CURVE)
         
         message_bytes = message.encode('utf-8')
+        # Se aplica hash SHA-256 al mensaje antes de la firma (estándar de seguridad)
         message_hash = HASH_ALGORITHM(message_bytes).digest()
         
         signature = private_key.sign(message_hash)
@@ -71,6 +76,7 @@ class Keys:
             signature_bytes = binascii.unhexlify(signature_hex)
             message_hash = binascii.unhexlify(message_hash_hex)
             
+            # Verificación utilizando decodificación DER estándar
             return public_key.verify_digest(
                 signature_bytes, 
                 message_hash,
@@ -78,6 +84,7 @@ class Keys:
             )
             
         except (ecdsa.BadSignatureError, binascii.Error, ValueError):
+            # Captura errores de formato o firmas inválidas sin romper la ejecución
             return False
 
     @staticmethod
@@ -98,6 +105,7 @@ class Keys:
             private_key = ecdsa.SigningKey.from_string(private_key_bytes, curve=CURVE)
             message_hash = binascii.unhexlify(digest_hex)
             
+            # Firma del digest utilizando codificación DER para la salida
             signature = private_key.sign_digest(
                 message_hash,
                 sigencode=ecdsa.util.sigencode_der
